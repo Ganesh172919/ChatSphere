@@ -6,9 +6,18 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import GoogleCallback from './pages/GoogleCallback';
+import Dashboard from './pages/Dashboard';
 import SoloChat from './pages/SoloChat';
 import Rooms from './pages/Rooms';
 import GroupChat from './pages/GroupChat';
+import Profile from './pages/Profile';
+import SearchPage from './pages/SearchPage';
+import { useAuthStore } from './store/authStore';
+
+function AuthRedirect() {
+  const { isAuthenticated } = useAuthStore();
+  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <Landing />;
+}
 
 export default function App() {
   return (
@@ -32,10 +41,18 @@ export default function App() {
           }}
         />
         <Routes>
-          <Route path="/" element={<Landing />} />
+          <Route path="/" element={<AuthRedirect />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/auth/google/callback" element={<GoogleCallback />} />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/chat"
             element={
@@ -57,6 +74,22 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <GroupChat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/search"
+            element={
+              <ProtectedRoute>
+                <SearchPage />
               </ProtectedRoute>
             }
           />

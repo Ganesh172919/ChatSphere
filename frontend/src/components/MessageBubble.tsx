@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Reply, ThumbsUp, Flame, Brain, Lightbulb, ChevronDown, ChevronUp } from 'lucide-react';
+import { Reply, ThumbsUp, Flame, Brain, Lightbulb, ChevronDown, ChevronUp, Pin } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import ReadReceipt from './ReadReceipt';
 
 interface Reaction {
   emoji: string;
@@ -23,7 +24,10 @@ interface Props {
   replyTo?: { id: string; username: string; content: string } | null;
   onReply?: () => void;
   onReaction?: (emoji: string) => void;
+  onPin?: (messageId: string) => void;
   showReactions?: boolean;
+  status?: 'sent' | 'delivered' | 'read';
+  isPinned?: boolean;
   index?: number;
 }
 
@@ -59,9 +63,9 @@ function getAvatarColor(userId: string): string {
 }
 
 export default function MessageBubble({
-  role, content, timestamp, username, userId, currentUserId,
-  isAI, triggeredBy, reactions, replyTo, onReply, onReaction,
-  showReactions = false, index = 0,
+  id, role, content, timestamp, username, userId, currentUserId,
+  isAI, triggeredBy, reactions, replyTo, onReply, onReaction, onPin,
+  showReactions = false, status, isPinned = false, index = 0,
 }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
   const isUser = role === 'user' || (role === 'group-user' && userId === currentUserId);
@@ -88,6 +92,8 @@ export default function MessageBubble({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ delay: index * 0.05, duration: 0.3 }}
       className={`flex gap-3 px-4 py-2 group ${isUser && !showReactions ? 'flex-row-reverse' : 'flex-row'}`}
+      role="article"
+      aria-label={`Message from ${username || role}`}
     >
       {/* Avatar */}
       {!isUser || showReactions ? (
@@ -97,6 +103,7 @@ export default function MessageBubble({
               ? 'bg-gradient-to-br from-neon-purple to-neon-blue animate-pulse-glow'
               : `bg-gradient-to-br ${getAvatarColor(userId || 'user')}`
           }`}
+          aria-hidden="true"
         >
           {isAI ? 'GX' : getInitials(username || 'U')}
         </div>
@@ -106,7 +113,7 @@ export default function MessageBubble({
       <div className={`max-w-[75%] min-w-0 ${isUser && !showReactions ? 'items-end' : ''}`}>
         {/* Reply reference */}
         {replyTo && (
-          <div className="text-xs text-gray-500 mb-1 pl-3 border-l-2 border-navy-500 truncate">
+          <div className="text-xs text-gray-500 mb-1 pl-3 border-l-2 border-navy-500 truncate" role="note">
             ↩ <span className="font-medium text-gray-400">{replyTo.username}</span>: {replyTo.content}
           </div>
         )}
@@ -116,6 +123,11 @@ export default function MessageBubble({
           <div className="flex items-center gap-2 mb-0.5">
             <span className="text-xs font-semibold text-gray-300">{username}</span>
             <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
+            {isPinned && (
+              <span className="flex items-center gap-0.5 text-[10px] text-neon-purple">
+                <Pin size={10} /> Pinned
+              </span>
+            )}
           </div>
         )}
 
@@ -154,6 +166,7 @@ export default function MessageBubble({
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="flex items-center gap-1 mt-2 text-xs text-neon-purple hover:text-purple-300 transition-colors"
+              aria-expanded={isExpanded}
             >
               {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               {isExpanded ? 'Show less' : 'Show full response'}
@@ -161,13 +174,17 @@ export default function MessageBubble({
           )}
         </div>
 
-        {/* Meta info (word count for AI) */}
+        {/* Meta info (word count for AI + read receipts) */}
         <div className="flex items-center gap-3 mt-1 px-1">
           {(isAssistant || isAI) && (
             <span className="text-[10px] text-gray-600">{words} words</span>
           )}
           {!showReactions && !isAssistant && (
             <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
+          )}
+          {/* Read receipt for sent messages */}
+          {isUser && status && (
+            <ReadReceipt status={status} />
           )}
         </div>
 
@@ -183,13 +200,14 @@ export default function MessageBubble({
                     ? 'border-neon-purple/40 bg-neon-purple/10 text-white'
                     : 'border-navy-600/50 bg-navy-700/30 text-gray-400 hover:border-navy-500'
                 }`}
+                aria-label={`${emoji} reaction, ${count} ${count === 1 ? 'person' : 'people'}`}
               >
                 <span>{emoji}</span>
                 <span>{count}</span>
               </button>
             ))}
 
-            {/* Add reaction / Reply (show on hover) */}
+            {/* Add reaction / Reply / Pin (show on hover) */}
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {REACTION_EMOJIS.map(({ emoji }) => (
                 <button
@@ -197,6 +215,7 @@ export default function MessageBubble({
                   onClick={() => onReaction?.(emoji)}
                   className="w-6 h-6 flex items-center justify-center rounded hover:bg-navy-600 text-sm transition-colors"
                   title={emoji}
+                  aria-label={`Add ${emoji} reaction`}
                 >
                   {emoji}
                 </button>
@@ -206,8 +225,21 @@ export default function MessageBubble({
                   onClick={onReply}
                   className="p-1 rounded hover:bg-navy-600 text-gray-500 hover:text-gray-300 transition-colors"
                   title="Reply"
+                  aria-label="Reply to message"
                 >
                   <Reply size={14} />
+                </button>
+              )}
+              {onPin && id && (
+                <button
+                  onClick={() => onPin(id)}
+                  className={`p-1 rounded hover:bg-navy-600 transition-colors ${
+                    isPinned ? 'text-neon-purple' : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                  title={isPinned ? 'Unpin message' : 'Pin message'}
+                  aria-label={isPinned ? 'Unpin message' : 'Pin message'}
+                >
+                  <Pin size={14} />
                 </button>
               )}
             </div>

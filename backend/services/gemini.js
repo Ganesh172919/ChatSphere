@@ -18,7 +18,7 @@ code blocks, and bold text where appropriate. Think before you speak.`;
  * @returns {Promise<string>} - The model's response text
  */
 async function sendMessage(history, userMessage) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-3-flash' });
 
   const chatHistory = history.length === 0
     ? [
@@ -41,7 +41,7 @@ async function sendMessage(history, userMessage) {
  * @returns {Promise<string>} - The model's response text
  */
 async function sendGroupMessage(roomHistory, userMessage, username) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-3-flash' });
 
   const chat = model.startChat({ history: roomHistory });
   const prompt = `[${username} asks]: ${userMessage}`;

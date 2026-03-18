@@ -29,6 +29,17 @@ const roomSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  // Members with roles
+  members: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    role: { type: String, enum: ['admin', 'moderator', 'member'], default: 'member' },
+    joinedAt: { type: Date, default: Date.now },
+  }],
+  // Pinned message IDs
+  pinnedMessages: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message',
+  }],
   aiHistory: [{
     role: { type: String, enum: ['user', 'model'] },
     parts: [{ text: String }],

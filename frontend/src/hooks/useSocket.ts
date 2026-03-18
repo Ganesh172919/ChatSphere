@@ -7,6 +7,7 @@ let globalSocket: Socket | null = null;
 export function useSocket() {
   const socketRef = useRef<Socket | null>(null);
   const { accessToken, isAuthenticated } = useAuthStore();
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated || !accessToken) {
@@ -67,6 +68,42 @@ export function useSocket() {
     socketRef.current?.emit('trigger_ai', { roomId, prompt });
   }, []);
 
+  // Typing indicators with debounce
+  const emitTyping = useCallback((roomId: string) => {
+    socketRef.current?.emit('typing_start', { roomId });
+
+    // Auto-stop after 2 seconds of no typing
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    typingTimeoutRef.current = setTimeout(() => {
+      socketRef.current?.emit('typing_stop', { roomId });
+    }, 2000);
+  }, []);
+
+  const stopTyping = useCallback((roomId: string) => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    socketRef.current?.emit('typing_stop', { roomId });
+  }, []);
+
+  // Read receipts
+  const markAsRead = useCallback((roomId: string, messageIds: string[]) => {
+    if (messageIds.length === 0) return;
+    socketRef.current?.emit('mark_read', { roomId, messageIds });
+  }, []);
+
+  // Pin/unpin
+  const pinMessage = useCallback((roomId: string, messageId: string) => {
+    socketRef.current?.emit('pin_message', { roomId, messageId });
+  }, []);
+
+  const unpinMessage = useCallback((roomId: string, messageId: string) => {
+    socketRef.current?.emit('unpin_message', { roomId, messageId });
+  }, []);
+
   const disconnect = useCallback(() => {
     if (globalSocket) {
       globalSocket.disconnect();
@@ -82,6 +119,11 @@ export function useSocket() {
     replyMessage,
     addReaction,
     triggerAi,
+    emitTyping,
+    stopTyping,
+    markAsRead,
+    pinMessage,
+    unpinMessage,
     disconnect,
   };
 }

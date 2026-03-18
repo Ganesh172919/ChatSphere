@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useAuthStore } from '../store/authStore';
 
 const api = axios.create({
   baseURL: '/api',
@@ -71,8 +72,8 @@ api.interceptors.response.use(
         const { data } = await axios.post('/api/auth/refresh', { refreshToken });
         const { accessToken, refreshToken: newRefreshToken } = data;
 
-        localStorage.setItem('accessToken', accessToken);
-        localStorage.setItem('refreshToken', newRefreshToken);
+        // Update both local storage and the Zustand store so components like useSocket get the new token
+        useAuthStore.getState().updateTokens(accessToken, newRefreshToken);
 
         api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
@@ -82,9 +83,7 @@ api.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError, null);
         // Clear auth state
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
-        localStorage.removeItem('auth-storage');
+        useAuthStore.getState().logout();
         window.location.href = '/login';
         return Promise.reject(refreshError);
       } finally {

@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Hash, X } from 'lucide-react';
+import { Send, ArrowLeft, Hash, X, Pin } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import MessageBubble from '../components/MessageBubble';
 import TypingIndicator from '../components/TypingIndicator';
 import UserList from '../components/UserList';
+import PinnedMessages from '../components/PinnedMessages';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
 import { useAuthStore } from '../store/authStore';
@@ -13,16 +14,23 @@ import { fetchRoomById } from '../api/rooms';
 import type { GroupMessage } from '../api/rooms';
 import toast from 'react-hot-toast';
 
+interface TypingUser {
+  userId: string;
+  username: string;
+}
+
 export default function GroupChat() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { socket, joinRoom, leaveRoom, sendMessage, replyMessage, addReaction, triggerAi } = useSocket();
+  const { socket, joinRoom, leaveRoom, sendMessage, replyMessage, addReaction, triggerAi, emitTyping, stopTyping, pinMessage, unpinMessage } = useSocket();
   const { currentRoom, setCurrentRoom, addMessageToCurrentRoom, updateMessageReactions, onlineUsers, setOnlineUsers, aiThinking, setAiThinking, clearCurrentRoom } = useRoomStore();
 
   const [input, setInput] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; username: string; content: string } | null>(null);
   const [showUsers, setShowUsers] = useState(true);
+  const [showPinned, setShowPinned] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -93,6 +101,28 @@ export default function GroupChat() {
       toast(`${username} left the room`, { duration: 2000, icon: '🚪' });
     };
 
+    // Typing indicators
+    const handleTypingStart = ({ userId, username }: TypingUser) => {
+      if (userId === user?.id) return; // Don't show own typing
+      setTypingUsers((prev) => {
+        if (prev.find((u) => u.userId === userId)) return prev;
+        return [...prev, { userId, username }];
+      });
+    };
+
+    const handleTypingStop = ({ userId }: { userId: string }) => {
+      setTypingUsers((prev) => prev.filter((u) => u.userId !== userId));
+    };
+
+    // Pinned messages
+    const handleMessagePinned = ({ messageId, pinnedBy }: { messageId: string; pinnedBy: string }) => {
+      toast.success(`${pinnedBy} pinned a message`, { duration: 2000, icon: '📌' });
+    };
+
+    const handleMessageUnpinned = () => {
+      // Refresh is handled automatically
+    };
+
     socket.on('receive_message', handleMessage);
     socket.on('ai_response', handleAiResponse);
     socket.on('ai_thinking', handleAiThinking);
@@ -100,6 +130,10 @@ export default function GroupChat() {
     socket.on('room_users', handleRoomUsers);
     socket.on('user_joined', handleUserJoined);
     socket.on('user_left', handleUserLeft);
+    socket.on('typing_start', handleTypingStart);
+    socket.on('typing_stop', handleTypingStop);
+    socket.on('message_pinned', handleMessagePinned);
+    socket.on('message_unpinned', handleMessageUnpinned);
 
     return () => {
       socket.off('receive_message', handleMessage);
@@ -109,8 +143,12 @@ export default function GroupChat() {
       socket.off('room_users', handleRoomUsers);
       socket.off('user_joined', handleUserJoined);
       socket.off('user_left', handleUserLeft);
+      socket.off('typing_start', handleTypingStart);
+      socket.off('typing_stop', handleTypingStop);
+      socket.off('message_pinned', handleMessagePinned);
+      socket.off('message_unpinned', handleMessageUnpinned);
     };
-  }, [socket, addMessageToCurrentRoom, updateMessageReactions, setOnlineUsers, setAiThinking]);
+  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, setOnlineUsers, setAiThinking]);
 
   // Auto-scroll
   useEffect(() => {
@@ -125,19 +163,26 @@ export default function GroupChat() {
     }
   }, [input]);
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    if (roomId && e.target.value.trim()) {
+      emitTyping(roomId);
+    }
+  };
+
   const handleSend = () => {
     if (!input.trim() || !roomId) return;
 
     const content = input.trim();
     setInput('');
     setReplyTo(null);
+    stopTyping(roomId);
 
     // Check for @ai trigger
     if (content.toLowerCase().startsWith('@ai ')) {
       const prompt = content.slice(4).trim();
       if (prompt) {
         triggerAi(roomId, prompt);
-        // Also send the user's message to the room
         sendMessage(roomId, content);
         return;
       }
@@ -154,6 +199,16 @@ export default function GroupChat() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const handlePinToggle = (messageId: string) => {
+    if (!roomId) return;
+    const msg = currentRoom?.messages.find((m) => m.id === messageId);
+    if (msg && (msg as GroupMessage & { isPinned?: boolean }).isPinned) {
+      unpinMessage(roomId, messageId);
+    } else {
+      pinMessage(roomId, messageId);
     }
   };
 
@@ -200,6 +255,20 @@ export default function GroupChat() {
               ))}
             </div>
           )}
+
+          {/* Pinned messages toggle */}
+          <button
+            onClick={() => setShowPinned(!showPinned)}
+            className={`mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
+              showPinned
+                ? 'bg-neon-purple/10 text-neon-purple border border-neon-purple/30'
+                : 'text-gray-400 hover:text-white hover:bg-navy-700'
+            }`}
+          >
+            <Pin size={14} />
+            <span>Pinned Messages</span>
+          </button>
+
           <div className="flex-1" />
           <div className="p-3 border-t border-navy-700/50">
             <p className="text-[10px] text-gray-600 text-center">
@@ -209,10 +278,10 @@ export default function GroupChat() {
         </div>
 
         {/* Center panel — chat */}
-        <main className="flex-1 flex flex-col min-w-0">
+        <main className="flex-1 flex flex-col min-w-0" role="main">
           {/* Room header (mobile) */}
           <div className="flex items-center gap-3 px-4 py-2 border-b border-navy-800/50 lg:hidden">
-            <Link to="/rooms" className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-navy-800 transition-all">
+            <Link to="/rooms" className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-navy-800 transition-all" aria-label="Back to rooms">
               <ArrowLeft size={18} />
             </Link>
             <div className="flex-1 min-w-0">
@@ -220,15 +289,23 @@ export default function GroupChat() {
               <p className="text-[10px] text-gray-500">{onlineUsers.length} online</p>
             </div>
             <button
+              onClick={() => setShowPinned(!showPinned)}
+              className={`p-2 rounded-lg transition-all ${showPinned ? 'text-neon-purple bg-neon-purple/10' : 'text-gray-400 hover:text-white hover:bg-navy-800'}`}
+              aria-label="Toggle pinned messages"
+            >
+              <Pin size={16} />
+            </button>
+            <button
               onClick={() => setShowUsers(!showUsers)}
               className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-navy-800 transition-all"
+              aria-label="Toggle user list"
             >
               {onlineUsers.length} 👤
             </button>
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-2 py-4">
+          <div className="flex-1 overflow-y-auto px-2 py-4" role="log" aria-live="polite">
             <div className="max-w-3xl mx-auto space-y-1">
               {currentRoom.messages.length === 0 && (
                 <div className="text-center py-20">
@@ -252,14 +329,35 @@ export default function GroupChat() {
                   reactions={msg.reactions}
                   replyTo={msg.replyTo}
                   showReactions
+                  status={(msg as GroupMessage & { status?: 'sent' | 'delivered' | 'read' }).status}
+                  isPinned={(msg as GroupMessage & { isPinned?: boolean }).isPinned}
                   onReply={() => setReplyTo({ id: msg.id, username: msg.username, content: msg.content })}
                   onReaction={(emoji) => roomId && addReaction(roomId, msg.id, emoji)}
+                  onPin={handlePinToggle}
                   index={i}
                 />
               ))}
               <AnimatePresence>
                 {aiThinking && <TypingIndicator />}
               </AnimatePresence>
+
+              {/* User typing indicators */}
+              <AnimatePresence>
+                {typingUsers.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="px-4 py-1"
+                  >
+                    <p className="text-xs text-gray-500 italic">
+                      {typingUsers.map((u) => u.username).join(', ')}{' '}
+                      {typingUsers.length === 1 ? 'is' : 'are'} typing...
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div ref={messagesEndRef} />
             </div>
           </div>
@@ -277,7 +375,7 @@ export default function GroupChat() {
                   <span className="text-gray-500">Replying to</span>
                   <span className="text-neon-purple font-medium">{replyTo.username}</span>
                   <span className="text-gray-600 truncate flex-1">{replyTo.content}</span>
-                  <button onClick={() => setReplyTo(null)} className="p-1 text-gray-500 hover:text-white">
+                  <button onClick={() => setReplyTo(null)} className="p-1 text-gray-500 hover:text-white" aria-label="Cancel reply">
                     <X size={12} />
                   </button>
                 </div>
@@ -292,16 +390,18 @@ export default function GroupChat() {
                 <textarea
                   ref={textareaRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   placeholder="Message #room or @ai for AI response..."
                   rows={1}
                   className="flex-1 bg-transparent text-white placeholder-gray-600 resize-none text-sm focus:outline-none max-h-32"
+                  aria-label="Message input"
                 />
                 <button
                   onClick={handleSend}
                   disabled={!input.trim()}
                   className="p-2.5 rounded-xl bg-gradient-to-r from-neon-purple to-neon-blue text-white hover:shadow-lg hover:shadow-purple-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 flex-shrink-0"
+                  aria-label="Send message"
                 >
                   <Send size={16} />
                 </button>
@@ -310,8 +410,15 @@ export default function GroupChat() {
           </div>
         </main>
 
-        {/* Right panel — online users */}
-        {showUsers && (
+        {/* Right panel — pinned messages or online users */}
+        {showPinned && roomId ? (
+          <PinnedMessages
+            roomId={roomId}
+            isOpen={showPinned}
+            onClose={() => setShowPinned(false)}
+            onUnpin={(messageId) => roomId && unpinMessage(roomId, messageId)}
+          />
+        ) : showUsers ? (
           <motion.div
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 240, opacity: 1 }}
@@ -319,7 +426,7 @@ export default function GroupChat() {
           >
             <UserList users={onlineUsers} creatorId={currentRoom.creatorId} />
           </motion.div>
-        )}
+        ) : null}
       </div>
     </div>
   );

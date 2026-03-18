@@ -35,10 +35,25 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  bio: {
+    type: String,
+    maxlength: 200,
+    default: '',
+  },
   authProvider: {
     type: String,
     enum: ['local', 'google'],
     default: 'local',
+  },
+  // Presence tracking
+  onlineStatus: {
+    type: String,
+    enum: ['online', 'away', 'offline'],
+    default: 'offline',
+  },
+  lastSeen: {
+    type: Date,
+    default: Date.now,
   },
 }, {
   timestamps: true,
@@ -70,7 +85,10 @@ userSchema.methods.toSafeObject = function () {
     email: this.email,
     avatar: this.avatar,
     displayName: this.displayName || this.username,
+    bio: this.bio || '',
     authProvider: this.authProvider,
+    onlineStatus: this.onlineStatus,
+    lastSeen: this.lastSeen?.toISOString() || null,
     createdAt: this.createdAt.toISOString(),
   };
 };

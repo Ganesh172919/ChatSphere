@@ -37,11 +37,38 @@ const messageSchema = new mongoose.Schema({
     of: [String],
     default: {},
   },
+  // Read receipts
+  status: {
+    type: String,
+    enum: ['sent', 'delivered', 'read'],
+    default: 'sent',
+  },
+  readBy: [{
+    userId: { type: String },
+    readAt: { type: Date, default: Date.now },
+  }],
+  // Pinned messages
+  isPinned: {
+    type: Boolean,
+    default: false,
+  },
+  pinnedBy: {
+    type: String,
+    default: null,
+  },
+  pinnedAt: {
+    type: Date,
+    default: null,
+  },
 }, {
   timestamps: true,
 });
 
 // Compound index for room message queries
 messageSchema.index({ roomId: 1, createdAt: -1 });
+// Text index for full-text search
+messageSchema.index({ content: 'text', username: 'text' });
+// Index for pinned messages
+messageSchema.index({ roomId: 1, isPinned: 1 });
 
 module.exports = mongoose.model('Message', messageSchema);

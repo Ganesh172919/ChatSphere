@@ -14,12 +14,20 @@ const config: Config = {
         sans: ['Inter', 'sans-serif'],
       },
       colors: {
+        white: 'rgb(var(--color-text-white) / <alpha-value>)',
+        gray: {
+          200: 'rgb(var(--color-gray-200) / <alpha-value>)',
+          300: 'rgb(var(--color-gray-300) / <alpha-value>)',
+          400: 'rgb(var(--color-gray-400) / <alpha-value>)',
+          500: 'rgb(var(--color-gray-500) / <alpha-value>)',
+          600: 'rgb(var(--color-gray-600) / <alpha-value>)',
+        },
         navy: {
-          900: '#0D0F1A',
-          800: '#12141F',
-          700: '#1A1D2E',
-          600: '#232740',
-          500: '#2E3354',
+          900: 'rgb(var(--color-navy-900) / <alpha-value>)',
+          800: 'rgb(var(--color-navy-800) / <alpha-value>)',
+          700: 'rgb(var(--color-navy-700) / <alpha-value>)',
+          600: 'rgb(var(--color-navy-600) / <alpha-value>)',
+          500: 'rgb(var(--color-navy-500) / <alpha-value>)',
         },
         neon: {
           purple: '#A855F7',

@@ -99,7 +99,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
       isAI: m.isAI,
       triggeredBy: m.triggeredBy,
       replyTo: m.replyTo && m.replyTo.id ? m.replyTo : null,
-      reactions: m.reactions ? Object.fromEntries(m.reactions) : {},
+      reactions: m.reactions ? (m.reactions instanceof Map ? Object.fromEntries(m.reactions) : m.reactions) : {},
     }));
 
     res.json({
@@ -140,6 +140,99 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Delete room error:', err);
     res.status(500).json({ error: 'Failed to delete room' });
+  }
+});
+
+// POST /api/rooms/:id/pin/:messageId — Pin a message
+router.post('/:id/pin/:messageId', authMiddleware, async (req, res) => {
+  try {
+    const room = await Room.findById(req.params.id);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    const message = await Message.findById(req.params.messageId);
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    if (message.roomId.toString() !== room._id.toString()) {
+      return res.status(400).json({ error: 'Message does not belong to this room' });
+    }
+
+    // Update message
+    message.isPinned = true;
+    message.pinnedBy = req.user.username || req.user.id;
+    message.pinnedAt = new Date();
+    await message.save();
+
+    // Add to room's pinned list (avoid duplicates)
+    if (!room.pinnedMessages.includes(message._id)) {
+      room.pinnedMessages.push(message._id);
+      await room.save();
+    }
+
+    res.json({ message: 'Message pinned', messageId: message._id.toString() });
+  } catch (err) {
+    console.error('Pin message error:', err);
+    res.status(500).json({ error: 'Failed to pin message' });
+  }
+});
+
+// DELETE /api/rooms/:id/pin/:messageId — Unpin a message
+router.delete('/:id/pin/:messageId', authMiddleware, async (req, res) => {
+  try {
+    const room = await Room.findById(req.params.id);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    const message = await Message.findById(req.params.messageId);
+    if (message) {
+      message.isPinned = false;
+      message.pinnedBy = null;
+      message.pinnedAt = null;
+      await message.save();
+    }
+
+    room.pinnedMessages = room.pinnedMessages.filter(
+      (id) => id.toString() !== req.params.messageId
+    );
+    await room.save();
+
+    res.json({ message: 'Message unpinned' });
+  } catch (err) {
+    console.error('Unpin message error:', err);
+    res.status(500).json({ error: 'Failed to unpin message' });
+  }
+});
+
+// GET /api/rooms/:id/pinned — Get pinned messages
+router.get('/:id/pinned', authMiddleware, async (req, res) => {
+  try {
+    const messages = await Message.find({
+      roomId: req.params.id,
+      isPinned: true,
+    })
+      .sort({ pinnedAt: -1 })
+      .lean();
+
+    const formatted = messages.map((m) => ({
+      id: m._id.toString(),
+      userId: m.userId,
+      username: m.username,
+      content: m.content,
+      timestamp: m.createdAt,
+      pinnedBy: m.pinnedBy,
+      pinnedAt: m.pinnedAt,
+      isAI: m.isAI,
+      reactions: m.reactions instanceof Map ? Object.fromEntries(m.reactions) : (m.reactions || {}),
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    console.error('Get pinned messages error:', err);
+    res.status(500).json({ error: 'Failed to load pinned messages' });
   }
 });
 
