@@ -19,6 +19,14 @@ const roomRoutes = require('./routes/rooms');
 const dashboardRoutes = require('./routes/dashboard');
 const userRoutes = require('./routes/users');
 const searchRoutes = require('./routes/search');
+const aiRoutes = require('./routes/ai');
+const settingsRoutes = require('./routes/settings');
+const pollRoutes = require('./routes/polls');
+const groupRoutes = require('./routes/groups');
+const moderationRoutes = require('./routes/moderation');
+const exportRoutes = require('./routes/export');
+const adminRoutes = require('./routes/admin');
+const analyticsRoutes = require('./routes/analytics');
 
 // Middleware
 const socketAuthMiddleware = require('./middleware/socketAuth');
@@ -52,6 +60,14 @@ app.use('/api/rooms', roomRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/polls', pollRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/moderation', moderationRoutes);
+app.use('/api/export', exportRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

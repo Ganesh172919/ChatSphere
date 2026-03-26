@@ -25,6 +25,8 @@ export interface GroupMessage {
   replyTo: { id: string; username: string; content: string } | null;
   isAI?: boolean;
   triggeredBy?: string;
+  status?: 'sent' | 'delivered' | 'read';
+  isPinned?: boolean;
 }
 
 export async function fetchRooms(): Promise<Room[]> {

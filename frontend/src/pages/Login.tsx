@@ -29,7 +29,7 @@ export default function Login() {
       const data = await loginUser(email.trim(), password);
       login(data.user, data.accessToken, data.refreshToken);
       toast.success(`Welcome back, ${data.user.username}!`);
-      navigate('/chat');
+      navigate('/dashboard');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
       toast.error(error.response?.data?.error || 'Login failed');

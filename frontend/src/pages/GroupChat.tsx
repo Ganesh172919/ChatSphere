@@ -1,12 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Hash, X, Pin } from 'lucide-react';
+import { Send, ArrowLeft, Hash, X, Pin, BarChart3, Shield } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import MessageBubble from '../components/MessageBubble';
 import TypingIndicator from '../components/TypingIndicator';
 import UserList from '../components/UserList';
 import PinnedMessages from '../components/PinnedMessages';
+import SmartReplies from '../components/SmartReplies';
+import { CreatePollModal } from '../components/PollComponents';
+import MemberManagement from '../components/MemberManagement';
+import GrammarSuggestion from '../components/GrammarSuggestion';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
 import { useAuthStore } from '../store/authStore';
@@ -31,6 +35,8 @@ export default function GroupChat() {
   const [showUsers, setShowUsers] = useState(true);
   const [showPinned, setShowPinned] = useState(false);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [showMemberPanel, setShowMemberPanel] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -115,7 +121,7 @@ export default function GroupChat() {
     };
 
     // Pinned messages
-    const handleMessagePinned = ({ messageId, pinnedBy }: { messageId: string; pinnedBy: string }) => {
+    const handleMessagePinned = ({ pinnedBy }: { messageId: string; pinnedBy: string }) => {
       toast.success(`${pinnedBy} pinned a message`, { duration: 2000, icon: '📌' });
     };
 
@@ -269,6 +275,24 @@ export default function GroupChat() {
             <span>Pinned Messages</span>
           </button>
 
+          {/* Polls button */}
+          <button
+            onClick={() => setShowPollModal(true)}
+            className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
+          >
+            <BarChart3 size={14} />
+            <span>Create Poll</span>
+          </button>
+
+          {/* Members button */}
+          <button
+            onClick={() => setShowMemberPanel(true)}
+            className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
+          >
+            <Shield size={14} />
+            <span>Manage Members</span>
+          </button>
+
           <div className="flex-1" />
           <div className="p-3 border-t border-navy-700/50">
             <p className="text-[10px] text-gray-600 text-center">
@@ -362,6 +386,18 @@ export default function GroupChat() {
             </div>
           </div>
 
+          {/* Smart replies */}
+          {currentRoom && currentRoom.messages.length > 0 && (
+            <SmartReplies
+              messages={currentRoom.messages.slice(-6).map(m => ({
+                username: m.username,
+                content: m.content,
+              }))}
+              context={`Group chat room: ${currentRoom.name}`}
+              onSelect={(reply) => setInput(reply)}
+            />
+          )}
+
           {/* Reply indicator */}
           <AnimatePresence>
             {replyTo && (
@@ -386,6 +422,11 @@ export default function GroupChat() {
           {/* Input area */}
           <div className="border-t border-navy-800/50 px-4 py-3">
             <div className="max-w-3xl mx-auto">
+              <GrammarSuggestion
+                text={input}
+                onAccept={(corrected) => setInput(corrected)}
+                enabled={true}
+              />
               <div className="flex items-end gap-3 bg-navy-800 rounded-2xl border border-navy-700/50 p-3 focus-within:border-neon-purple/30 transition-colors">
                 <textarea
                   ref={textareaRef}
@@ -428,6 +469,29 @@ export default function GroupChat() {
           </motion.div>
         ) : null}
       </div>
+
+      {/* Poll create modal */}
+      <AnimatePresence>
+        {showPollModal && roomId && (
+          <CreatePollModal
+            roomId={roomId}
+            onCreated={() => toast.success('Poll created!')}
+            onClose={() => setShowPollModal(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Member management modal */}
+      <AnimatePresence>
+        {showMemberPanel && roomId && user && (
+          <MemberManagement
+            roomId={roomId}
+            currentUserId={user.id}
+            isCreator={currentRoom.creatorId === user.id}
+            onClose={() => setShowMemberPanel(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

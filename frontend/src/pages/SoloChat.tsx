@@ -5,6 +5,8 @@ import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import MessageBubble from '../components/MessageBubble';
 import TypingIndicator from '../components/TypingIndicator';
+import SmartReplies from '../components/SmartReplies';
+import GrammarSuggestion from '../components/GrammarSuggestion';
 import { useChat } from '../hooks/useChat';
 import { useChatStore } from '../store/chatStore';
 
@@ -138,9 +140,26 @@ export default function SoloChat() {
             )}
           </div>
 
+          {/* Smart Replies */}
+          {activeConversation && activeConversation.messages.length > 0 && (
+            <SmartReplies
+              messages={activeConversation.messages.map(m => ({
+                role: m.role,
+                content: m.content,
+              }))}
+              context="Solo AI chat"
+              onSelect={(reply) => setInput(reply)}
+            />
+          )}
+
           {/* Input area */}
           <div className="border-t border-navy-800/50 px-4 py-3">
             <div className="max-w-3xl mx-auto">
+              <GrammarSuggestion
+                text={input}
+                onAccept={(corrected) => setInput(corrected)}
+                enabled={true}
+              />
               <div className="flex items-end gap-3 bg-navy-800 rounded-2xl border border-navy-700/50 p-3 focus-within:border-neon-purple/30 transition-colors">
                 <textarea
                   ref={textareaRef}

@@ -100,6 +100,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
       triggeredBy: m.triggeredBy,
       replyTo: m.replyTo && m.replyTo.id ? m.replyTo : null,
       reactions: m.reactions ? (m.reactions instanceof Map ? Object.fromEntries(m.reactions) : m.reactions) : {},
+      status: m.status || 'sent',
+      isPinned: m.isPinned || false,
     }));
 
     res.json({

@@ -42,7 +42,7 @@ export default function GoogleCallback() {
         refreshToken
       );
       toast.success(`Welcome, ${displayName || username}! 🎉`);
-      navigate('/chat');
+      navigate('/dashboard');
     } else {
       toast.error('Authentication failed — missing credentials');
       navigate('/login');

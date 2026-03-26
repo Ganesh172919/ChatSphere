@@ -63,7 +63,7 @@ export default function Register() {
       const data = await registerUser(username.trim(), email.trim(), password);
       login(data.user, data.accessToken, data.refreshToken);
       toast.success(`Welcome, ${data.user.username}! 🎉`);
-      navigate('/chat');
+      navigate('/dashboard');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
       toast.error(error.response?.data?.error || 'Registration failed');

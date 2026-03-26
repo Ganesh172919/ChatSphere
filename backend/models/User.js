@@ -55,6 +55,35 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // User settings & preferences
+  settings: {
+    theme: {
+      mode: { type: String, enum: ['dark', 'light', 'system'], default: 'dark' },
+      customTheme: { type: String, default: 'default' },
+    },
+    accentColor: { type: String, default: '#A855F7' },
+    notifications: {
+      sound: { type: Boolean, default: true },
+      desktop: { type: Boolean, default: true },
+      mentions: { type: Boolean, default: true },
+      replies: { type: Boolean, default: true },
+    },
+    aiFeatures: {
+      smartReplies: { type: Boolean, default: true },
+      sentimentAnalysis: { type: Boolean, default: false },
+      grammarCheck: { type: Boolean, default: false },
+    },
+  },
+  // Blocked users
+  blockedUsers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  // Admin flag
+  isAdmin: {
+    type: Boolean,
+    default: false,
+  },
 }, {
   timestamps: true,
 });

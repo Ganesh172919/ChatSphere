@@ -12,6 +12,9 @@ import Rooms from './pages/Rooms';
 import GroupChat from './pages/GroupChat';
 import Profile from './pages/Profile';
 import SearchPage from './pages/SearchPage';
+import Settings from './pages/Settings';
+import ExportChat from './pages/ExportChat';
+import AdminDashboard from './pages/AdminDashboard';
 import { useAuthStore } from './store/authStore';
 
 function AuthRedirect() {
@@ -90,6 +93,30 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <SearchPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/export"
+            element={
+              <ProtectedRoute>
+                <ExportChat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <AdminDashboard />
               </ProtectedRoute>
             }
           />
