@@ -2,12 +2,17 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Room = require('../models/Room');
 const User = require('../models/User');
+const { isValidObjectId, findRoomMember } = require('../helpers/validate');
 
 const router = express.Router();
 
 // GET /api/groups/:roomId/members — Get members with roles
 router.get('/:roomId/members', authMiddleware, async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.roomId)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
     const room = await Room.findById(req.params.roomId)
       .select('members creatorId')
       .lean();
@@ -51,6 +56,10 @@ router.put('/:roomId/members/:userId/role', authMiddleware, async (req, res) => 
     const { role } = req.body;
     const { roomId, userId } = req.params;
 
+    if (!isValidObjectId(roomId) || !isValidObjectId(userId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
+
     if (!role || !['admin', 'moderator', 'member'].includes(role)) {
       return res.status(400).json({ error: 'Valid role required: admin, moderator, or member' });
     }
@@ -76,12 +85,11 @@ router.put('/:roomId/members/:userId/role', authMiddleware, async (req, res) => 
       return res.status(403).json({ error: 'Cannot change the room creator\'s role' });
     }
 
-    // Moderators can't promote to admin
+    // Only creator can promote to admin
     if (!isCreator && role === 'admin') {
       return res.status(403).json({ error: 'Only the room creator can assign admin role' });
     }
 
-    // Find and update the member
     const memberIndex = room.members.findIndex(
       m => m.userId.toString() === userId
     );
@@ -108,6 +116,10 @@ router.put('/:roomId/members/:userId/role', authMiddleware, async (req, res) => 
 router.delete('/:roomId/members/:userId', authMiddleware, async (req, res) => {
   try {
     const { roomId, userId } = req.params;
+
+    if (!isValidObjectId(roomId) || !isValidObjectId(userId)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
 
     const room = await Room.findById(roomId);
     if (!room) {

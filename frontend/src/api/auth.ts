@@ -7,6 +7,7 @@ interface AuthUser {
   displayName?: string;
   avatar?: string;
   authProvider?: string;
+  isAdmin?: boolean;
   createdAt: string;
 }
 
@@ -37,5 +38,15 @@ export async function logoutUser(refreshToken: string): Promise<void> {
 
 export async function getMe(): Promise<AuthUser> {
   const { data } = await api.get<AuthUser>('/auth/me');
+  return data;
+}
+
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  const { data } = await api.post<{ message: string }>('/auth/forgot-password', { email });
+  return data;
+}
+
+export async function resetPassword(email: string, token: string, newPassword: string): Promise<{ message: string }> {
+  const { data } = await api.post<{ message: string }>('/auth/reset-password', { email, token, newPassword });
   return data;
 }

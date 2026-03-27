@@ -1,9 +1,12 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const passport = require('passport');
 const User = require('../models/User');
 const RefreshToken = require('../models/RefreshToken');
 const authMiddleware = require('../middleware/auth');
+const { authLimiter } = require('../middleware/rateLimit');
+const { sendResetEmail } = require('../services/email');
 
 const router = express.Router();
 
@@ -27,8 +30,8 @@ async function saveRefreshToken(token, userId) {
   await RefreshToken.create({ token, userId, expiresAt });
 }
 
-// POST /api/auth/register
-router.post('/register', async (req, res) => {
+// POST /api/auth/register (rate limited)
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
@@ -87,8 +90,8 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// POST /api/auth/login
-router.post('/login', async (req, res) => {
+// POST /api/auth/login (rate limited)
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -124,8 +127,8 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/refresh
-router.post('/refresh', async (req, res) => {
+// POST /api/auth/refresh (rate limited)
+router.post('/refresh', authLimiter, async (req, res) => {
   try {
     const { refreshToken } = req.body;
 
@@ -194,6 +197,77 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
+// POST /api/auth/forgot-password (rate limited)
+router.post('/forgot-password', authLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+
+    // Always return success to prevent email enumeration
+    if (!user || user.authProvider === 'google') {
+      return res.json({ message: 'If an account with that email exists, a reset link has been sent.' });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await user.save();
+
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const resetUrl = `${clientUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
+
+    await sendResetEmail(user.email, resetUrl);
+
+    res.json({ message: 'If an account with that email exists, a reset link has been sent.' });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// POST /api/auth/reset-password (rate limited)
+router.post('/reset-password', authLimiter, async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ error: 'Email, token, and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    user.passwordHash = newPassword; // Will be hashed by pre-save hook
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    await user.save();
+
+    // Invalidate all refresh tokens for this user (force re-login)
+    await RefreshToken.deleteMany({ userId: user._id });
+
+    res.json({ message: 'Password reset successful. Please log in with your new password.' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
 // GET /api/auth/google — Redirect to Google OAuth
 router.get('/google', passport.authenticate('google', {
   scope: ['profile', 'email'],
@@ -209,7 +283,7 @@ router.get('/google/callback',
       const tokens = generateTokens(user);
       await saveRefreshToken(tokens.refreshToken, user._id);
 
-      // Redirect to frontend with tokens in URL params
+      // Pass tokens via URL params (short-lived access token at most)
       const clientURL = process.env.CLIENT_URL || 'http://localhost:5173';
       const params = new URLSearchParams({
         accessToken: tokens.accessToken,

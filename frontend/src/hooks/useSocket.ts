@@ -23,17 +23,54 @@ export function useSocket() {
       return;
     }
 
+    // Disconnect stale socket if exists
+    if (globalSocket && !globalSocket.connected) {
+      globalSocket.disconnect();
+      globalSocket = null;
+    }
+
     const socket = io('/', {
       auth: { token: accessToken },
       transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     socket.on('connect', () => {
       console.log('Socket connected:', socket.id);
     });
 
-    socket.on('connect_error', (err) => {
+    socket.on('connect_error', async (err) => {
       console.error('Socket connection error:', err.message);
+
+      // If auth error, try refreshing the token
+      if (err.message?.includes('Authentication') || err.message?.includes('jwt')) {
+        try {
+          const refreshToken = localStorage.getItem('refreshToken');
+          if (refreshToken) {
+            const response = await fetch('/api/auth/refresh', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refreshToken }),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              useAuthStore.getState().updateTokens(data.accessToken, data.refreshToken);
+
+              // Reconnect with new token
+              socket.auth = { token: data.accessToken };
+              socket.connect();
+            } else {
+              useAuthStore.getState().logout();
+            }
+          }
+        } catch (refreshErr) {
+          console.error('Socket token refresh failed:', refreshErr);
+        }
+      }
     });
 
     globalSocket = socket;
@@ -56,6 +93,19 @@ export function useSocket() {
     socketRef.current?.emit('send_message', { roomId, content });
   }, []);
 
+  const sendFileMessage = useCallback((roomId: string, content: string, fileData: {
+    fileUrl: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+  }) => {
+    socketRef.current?.emit('send_message', {
+      roomId,
+      content,
+      ...fileData,
+    });
+  }, []);
+
   const replyMessage = useCallback((roomId: string, content: string, replyToId: string) => {
     socketRef.current?.emit('reply_message', { roomId, content, replyToId });
   }, []);
@@ -66,6 +116,14 @@ export function useSocket() {
 
   const triggerAi = useCallback((roomId: string, prompt: string) => {
     socketRef.current?.emit('trigger_ai', { roomId, prompt });
+  }, []);
+
+  const editMessage = useCallback((roomId: string, messageId: string, newContent: string) => {
+    socketRef.current?.emit('edit_message', { roomId, messageId, newContent });
+  }, []);
+
+  const deleteMessage = useCallback((roomId: string, messageId: string) => {
+    socketRef.current?.emit('delete_message', { roomId, messageId });
   }, []);
 
   // Typing indicators with debounce
@@ -116,9 +174,12 @@ export function useSocket() {
     joinRoom,
     leaveRoom,
     sendMessage,
+    sendFileMessage,
     replyMessage,
     addReaction,
     triggerAi,
+    editMessage,
+    deleteMessage,
     emitTyping,
     stopTyping,
     markAsRead,

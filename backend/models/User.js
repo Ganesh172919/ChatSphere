@@ -84,6 +84,15 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // Password reset
+  resetPasswordToken: {
+    type: String,
+    default: null,
+  },
+  resetPasswordExpires: {
+    type: Date,
+    default: null,
+  },
 }, {
   timestamps: true,
 });
@@ -118,6 +127,7 @@ userSchema.methods.toSafeObject = function () {
     authProvider: this.authProvider,
     onlineStatus: this.onlineStatus,
     lastSeen: this.lastSeen?.toISOString() || null,
+    isAdmin: this.isAdmin || false,
     createdAt: this.createdAt.toISOString(),
   };
 };

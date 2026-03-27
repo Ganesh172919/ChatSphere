@@ -10,6 +10,8 @@ interface RoomState {
   setCurrentRoom: (room: (Room & { messages: GroupMessage[] }) | null) => void;
   addMessageToCurrentRoom: (message: GroupMessage) => void;
   updateMessageReactions: (messageId: string, reactions: Record<string, string[]>) => void;
+  editMessageInCurrentRoom: (messageId: string, content: string, editedAt: string) => void;
+  deleteMessageInCurrentRoom: (messageId: string) => void;
   setOnlineUsers: (users: Array<{ id: string; username: string }>) => void;
   setAiThinking: (status: boolean) => void;
   clearCurrentRoom: () => void;
@@ -40,6 +42,30 @@ export const useRoomStore = create<RoomState>()((set) => ({
           ...state.currentRoom,
           messages: state.currentRoom.messages.map((m) =>
             m.id === messageId ? { ...m, reactions } : m
+          ),
+        },
+      };
+    }),
+  editMessageInCurrentRoom: (messageId, content, editedAt) =>
+    set((state) => {
+      if (!state.currentRoom) return state;
+      return {
+        currentRoom: {
+          ...state.currentRoom,
+          messages: state.currentRoom.messages.map((m) =>
+            m.id === messageId ? { ...m, content, isEdited: true, editedAt } : m
+          ),
+        },
+      };
+    }),
+  deleteMessageInCurrentRoom: (messageId) =>
+    set((state) => {
+      if (!state.currentRoom) return state;
+      return {
+        currentRoom: {
+          ...state.currentRoom,
+          messages: state.currentRoom.messages.map((m) =>
+            m.id === messageId ? { ...m, content: '🗑️ This message was deleted', isDeleted: true } : m
           ),
         },
       };

@@ -47,6 +47,10 @@ const reportSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  reviewedAt: {
+    type: Date,
+    default: null,
+  },
 }, {
   timestamps: true,
 });
@@ -54,5 +58,6 @@ const reportSchema = new mongoose.Schema({
 reportSchema.index({ reporterId: 1 });
 reportSchema.index({ status: 1, createdAt: -1 });
 reportSchema.index({ targetType: 1, targetId: 1 });
+reportSchema.index({ reason: 1 });
 
 module.exports = mongoose.model('Report', reportSchema);

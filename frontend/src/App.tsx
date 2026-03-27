@@ -6,6 +6,8 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import GoogleCallback from './pages/GoogleCallback';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import SoloChat from './pages/SoloChat';
 import Rooms from './pages/Rooms';
@@ -47,6 +49,8 @@ export default function App() {
           <Route path="/" element={<AuthRedirect />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/auth/google/callback" element={<GoogleCallback />} />
           <Route
             path="/dashboard"

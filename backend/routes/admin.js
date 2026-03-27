@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Room = require('../models/Room');
 const Message = require('../models/Message');
 const Report = require('../models/Report');
+const { isValidObjectId } = require('../helpers/validate');
 
 const router = express.Router();
 
@@ -58,16 +59,20 @@ router.get('/stats', authMiddleware, adminCheck, async (req, res) => {
   }
 });
 
-// GET /api/admin/reports — List reports with pagination
+// GET /api/admin/reports — List reports with pagination and reason filter
 router.get('/reports', authMiddleware, adminCheck, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(50, parseInt(req.query.limit) || 20);
     const status = req.query.status || 'pending';
+    const reason = req.query.reason || null;
 
     const filter = {};
     if (status !== 'all') {
       filter.status = status;
+    }
+    if (reason && ['spam', 'harassment', 'hate_speech', 'inappropriate_content', 'impersonation', 'other'].includes(reason)) {
+      filter.reason = reason;
     }
 
     const [reports, total] = await Promise.all([
@@ -76,6 +81,7 @@ router.get('/reports', authMiddleware, adminCheck, async (req, res) => {
         .skip((page - 1) * limit)
         .limit(limit)
         .populate('reporterId', 'username displayName avatar')
+        .populate('reviewedBy', 'username displayName')
         .lean(),
       Report.countDocuments(filter),
     ]);
@@ -96,6 +102,11 @@ router.get('/reports', authMiddleware, adminCheck, async (req, res) => {
         description: r.description,
         status: r.status,
         reviewNote: r.reviewNote || '',
+        reviewedBy: r.reviewedBy ? {
+          id: r.reviewedBy._id?.toString(),
+          username: r.reviewedBy.username,
+        } : null,
+        reviewedAt: r.reviewedAt || null,
         createdAt: r.createdAt,
       })),
       total,
@@ -113,6 +124,10 @@ router.put('/reports/:id', authMiddleware, adminCheck, async (req, res) => {
   try {
     const { status, reviewNote } = req.body;
 
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid report ID' });
+    }
+
     if (!status || !['reviewed', 'action_taken', 'dismissed'].includes(status)) {
       return res.status(400).json({ error: 'Valid status required' });
     }
@@ -123,6 +138,7 @@ router.put('/reports/:id', authMiddleware, adminCheck, async (req, res) => {
         status,
         reviewedBy: req.user.id,
         reviewNote: reviewNote || '',
+        reviewedAt: new Date(),
       },
       { new: true }
     ).lean();
@@ -134,6 +150,7 @@ router.put('/reports/:id', authMiddleware, adminCheck, async (req, res) => {
     res.json({
       id: report._id.toString(),
       status: report.status,
+      reviewedAt: report.reviewedAt,
       message: `Report ${status.replace('_', ' ')}`,
     });
   } catch (err) {
@@ -149,11 +166,14 @@ router.get('/users', authMiddleware, adminCheck, async (req, res) => {
     const limit = Math.min(50, parseInt(req.query.limit) || 20);
     const search = req.query.q || '';
 
-    const filter = search
+    // Escape regex special characters for safety
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const filter = escapedSearch
       ? { $or: [
-          { username: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
-          { displayName: { $regex: search, $options: 'i' } },
+          { username: { $regex: escapedSearch, $options: 'i' } },
+          { email: { $regex: escapedSearch, $options: 'i' } },
+          { displayName: { $regex: escapedSearch, $options: 'i' } },
         ]}
       : {};
 

@@ -154,6 +154,12 @@ export default function Login() {
               </div>
             </motion.div>
 
+            <div className="flex justify-end">
+              <Link to="/forgot-password" className="text-xs text-neon-purple hover:text-purple-300 transition-colors">
+                Forgot password?
+              </Link>
+            </div>
+
             <motion.button
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

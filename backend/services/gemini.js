@@ -13,12 +13,9 @@ code blocks, and bold text where appropriate. Think before you speak.`;
 
 /**
  * Send a message in a solo chat context.
- * @param {Array} history - Gemini-format history [{role, parts: [{text}]}]
- * @param {string} userMessage - The new user message
- * @returns {Promise<string>} - The model's response text
  */
 async function sendMessage(history, userMessage) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-3-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const chatHistory = history.length === 0
     ? [
@@ -35,13 +32,9 @@ async function sendMessage(history, userMessage) {
 
 /**
  * Send a message in a group chat context using room-specific AI history.
- * @param {Array} roomHistory - The room's AI conversation history
- * @param {string} userMessage - The @ai prompt
- * @param {string} username - The user who triggered the AI
- * @returns {Promise<string>} - The model's response text
  */
 async function sendGroupMessage(roomHistory, userMessage, username) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-3-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const chat = model.startChat({ history: roomHistory });
   const prompt = `[${username} asks]: ${userMessage}`;

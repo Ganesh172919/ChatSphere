@@ -2,6 +2,7 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Report = require('../models/Report');
 const User = require('../models/User');
+const { isValidObjectId } = require('../helpers/validate');
 
 const router = express.Router();
 
@@ -18,6 +19,10 @@ router.post('/report', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'targetType must be "user" or "message"' });
     }
 
+    if (!isValidObjectId(targetId)) {
+      return res.status(400).json({ error: 'Invalid target ID' });
+    }
+
     const validReasons = ['spam', 'harassment', 'hate_speech', 'inappropriate_content', 'impersonation', 'other'];
     if (!validReasons.includes(reason)) {
       return res.status(400).json({ error: `reason must be one of: ${validReasons.join(', ')}` });
@@ -28,7 +33,7 @@ router.post('/report', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Cannot report yourself' });
     }
 
-    // Check for duplicate reports
+    // Check for duplicate pending reports from this user
     const existing = await Report.findOne({
       reporterId: req.user.id,
       targetType,
@@ -44,9 +49,9 @@ router.post('/report', authMiddleware, async (req, res) => {
       reporterId: req.user.id,
       targetType,
       targetId,
-      roomId: roomId || null,
+      roomId: roomId && isValidObjectId(roomId) ? roomId : null,
       reason,
-      description: description?.trim() || '',
+      description: description?.trim().slice(0, 1000) || '',
     });
 
     await report.save();
@@ -66,8 +71,8 @@ router.post('/block', authMiddleware, async (req, res) => {
   try {
     const { userId } = req.body;
 
-    if (!userId) {
-      return res.status(400).json({ error: 'userId is required' });
+    if (!userId || !isValidObjectId(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required' });
     }
 
     if (userId === req.user.id) {
@@ -79,7 +84,6 @@ router.post('/block', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Initialize blockedUsers if not exists
     if (!user.blockedUsers) {
       user.blockedUsers = [];
     }
@@ -105,6 +109,10 @@ router.post('/block', authMiddleware, async (req, res) => {
 // DELETE /api/moderation/block/:userId — Unblock a user
 router.delete('/block/:userId', authMiddleware, async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });

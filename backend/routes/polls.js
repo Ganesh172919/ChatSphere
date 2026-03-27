@@ -2,10 +2,11 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Poll = require('../models/Poll');
 const Room = require('../models/Room');
+const { isValidObjectId, findRoomMember } = require('../helpers/validate');
 
 const router = express.Router();
 
-// POST /api/polls — Create a new poll
+// POST /api/polls — Create a new poll (room members only)
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { roomId, question, options, allowMultipleVotes, isAnonymous, expiresInMinutes } = req.body;
@@ -18,10 +19,17 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Maximum 10 options allowed' });
     }
 
-    // Verify room exists
-    const room = await Room.findById(roomId);
+    if (!isValidObjectId(roomId)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    // Verify room exists and user is a member
+    const room = await Room.findById(roomId).lean();
     if (!room) {
       return res.status(404).json({ error: 'Room not found' });
+    }
+    if (!findRoomMember(room, req.user.id)) {
+      return res.status(403).json({ error: 'You must be a room member to create polls' });
     }
 
     const poll = new Poll({
@@ -50,6 +58,10 @@ router.post('/', authMiddleware, async (req, res) => {
 // GET /api/polls/room/:roomId — List polls for a room
 router.get('/room/:roomId', authMiddleware, async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.roomId)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
     const polls = await Poll.find({ roomId: req.params.roomId })
       .sort({ createdAt: -1 })
       .limit(20)
@@ -62,21 +74,34 @@ router.get('/room/:roomId', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/polls/:id/vote — Vote on a poll
+// POST /api/polls/:id/vote — Vote on a poll (room members only)
 router.post('/:id/vote', authMiddleware, async (req, res) => {
   try {
     const { optionIndex } = req.body;
-    const poll = await Poll.findById(req.params.id);
 
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid poll ID' });
+    }
+
+    const poll = await Poll.findById(req.params.id);
     if (!poll) {
       return res.status(404).json({ error: 'Poll not found' });
+    }
+
+    // Check room membership
+    const room = await Room.findById(poll.roomId).select('members').lean();
+    if (room && !findRoomMember(room, req.user.id)) {
+      return res.status(403).json({ error: 'You must be a room member to vote' });
     }
 
     if (poll.isClosed) {
       return res.status(400).json({ error: 'This poll is closed' });
     }
 
+    // Auto-close if expired
     if (poll.expiresAt && new Date() > poll.expiresAt) {
+      poll.isClosed = true;
+      await poll.save();
       return res.status(400).json({ error: 'This poll has expired' });
     }
 
@@ -113,17 +138,31 @@ router.post('/:id/vote', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/polls/:id/close — Close a poll (creator only)
+// POST /api/polls/:id/close — Close a poll (creator or room admin/moderator)
 router.post('/:id/close', authMiddleware, async (req, res) => {
   try {
-    const poll = await Poll.findById(req.params.id);
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid poll ID' });
+    }
 
+    const poll = await Poll.findById(req.params.id);
     if (!poll) {
       return res.status(404).json({ error: 'Poll not found' });
     }
 
-    if (poll.creatorId.toString() !== req.user.id) {
-      return res.status(403).json({ error: 'Only the poll creator can close it' });
+    const isCreator = poll.creatorId.toString() === req.user.id;
+
+    // Also allow room admins/moderators to close
+    let isModOrAdmin = false;
+    const room = await Room.findById(poll.roomId).select('members creatorId').lean();
+    if (room) {
+      const member = findRoomMember(room, req.user.id);
+      isModOrAdmin = member && ['admin', 'moderator'].includes(member.role);
+      if (room.creatorId.toString() === req.user.id) isModOrAdmin = true;
+    }
+
+    if (!isCreator && !isModOrAdmin) {
+      return res.status(403).json({ error: 'Only the poll creator or room moderators can close it' });
     }
 
     poll.isClosed = true;

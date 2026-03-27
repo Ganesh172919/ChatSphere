@@ -15,31 +15,24 @@ router.get('/', authMiddleware, async (req, res) => {
     // Run all queries in parallel for speed
     const [
       totalConversations,
-      totalRooms,
+      userRooms,
       totalMessagesSent,
-      recentRooms,
       recentMessages,
       onlineUsersCount,
     ] = await Promise.all([
-      // Solo conversations count
       Conversation.countDocuments({ userId }),
-      // Rooms count
-      Room.countDocuments(),
-      // Messages sent by user
-      Message.countDocuments({ userId }),
-      // Recent rooms (last 5)
-      Room.find()
+      // Only count rooms the user is a member of
+      Room.find({ 'members.userId': userId })
         .select('name description tags createdAt')
         .sort({ createdAt: -1 })
         .limit(5)
         .lean(),
-      // Recent messages across rooms (last 10 activity items)
+      Message.countDocuments({ userId }),
       Message.find({ userId })
         .select('content roomId username createdAt isAI')
         .sort({ createdAt: -1 })
         .limit(10)
         .lean(),
-      // Online users
       User.countDocuments({ onlineStatus: 'online' }),
     ]);
 
@@ -51,34 +44,30 @@ router.get('/', authMiddleware, async (req, res) => {
       createdAt: { $gte: todayStart },
     });
 
-    // Build activity feed from recent messages
-    const activity = await Promise.all(
-      recentMessages.map(async (msg) => {
-        let roomName = null;
-        if (msg.roomId) {
-          const room = await Room.findById(msg.roomId).select('name').lean();
-          roomName = room?.name || 'Unknown Room';
-        }
-        return {
-          id: msg._id.toString(),
-          type: msg.isAI ? 'ai_response' : 'message',
-          content: msg.content.substring(0, 100),
-          roomName,
-          username: msg.username,
-          timestamp: msg.createdAt,
-        };
-      })
-    );
+    // Batch-fetch room names for activity feed (avoid N+1)
+    const roomIds = [...new Set(recentMessages.map(m => m.roomId?.toString()).filter(Boolean))];
+    const rooms = await Room.find({ _id: { $in: roomIds } }).select('name').lean();
+    const roomMap = {};
+    rooms.forEach(r => { roomMap[r._id.toString()] = r.name; });
+
+    const activity = recentMessages.map(msg => ({
+      id: msg._id.toString(),
+      type: msg.isAI ? 'ai_response' : 'message',
+      content: msg.content.substring(0, 100),
+      roomName: msg.roomId ? (roomMap[msg.roomId.toString()] || 'Unknown Room') : null,
+      username: msg.username,
+      timestamp: msg.createdAt,
+    }));
 
     res.json({
       stats: {
         totalConversations,
-        totalRooms,
+        totalRooms: userRooms.length,
         totalMessagesSent,
         messagesToday,
         onlineUsers: onlineUsersCount,
       },
-      recentRooms: recentRooms.map((r) => ({
+      recentRooms: userRooms.map(r => ({
         id: r._id.toString(),
         name: r.name,
         description: r.description,

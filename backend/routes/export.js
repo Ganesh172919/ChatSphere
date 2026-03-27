@@ -3,6 +3,7 @@ const authMiddleware = require('../middleware/auth');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const Room = require('../models/Room');
+const { isValidObjectId, findRoomMember } = require('../helpers/validate');
 
 const router = express.Router();
 
@@ -41,17 +42,26 @@ router.get('/conversations', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/export/rooms/:roomId — Export room messages
+// GET /api/export/rooms/:roomId — Export room messages (membership required)
 router.get('/rooms/:roomId', authMiddleware, async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.roomId)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
     const room = await Room.findById(req.params.roomId).lean();
     if (!room) {
       return res.status(404).json({ error: 'Room not found' });
     }
 
+    // Check membership — only room members can export
+    if (!findRoomMember(room, req.user.id)) {
+      return res.status(403).json({ error: 'You must be a room member to export messages' });
+    }
+
+    // userId is a String field, not an ObjectId reference — don't populate
     const messages = await Message.find({ roomId: req.params.roomId })
       .sort({ createdAt: 1 })
-      .populate('userId', 'username displayName')
       .lean();
 
     const exportData = {
@@ -65,10 +75,12 @@ router.get('/rooms/:roomId', authMiddleware, async (req, res) => {
       },
       messages: messages.map(m => ({
         id: m._id.toString(),
-        username: m.userId?.username || 'Unknown',
-        displayName: m.userId?.displayName || m.userId?.username || 'Unknown',
-        content: m.content,
+        username: m.username,
+        content: m.isDeleted ? '[deleted]' : m.content,
         isAI: m.isAI || false,
+        isEdited: m.isEdited || false,
+        fileUrl: m.fileUrl || null,
+        fileName: m.fileName || null,
         createdAt: m.createdAt,
       })),
       totalMessages: messages.length,

@@ -6,6 +6,7 @@ export interface Room {
   description: string;
   tags: string[];
   maxUsers: number;
+  memberCount?: number;
   creatorId: string;
   createdAt: string;
   messageCount: number;
@@ -27,6 +28,13 @@ export interface GroupMessage {
   triggeredBy?: string;
   status?: 'sent' | 'delivered' | 'read';
   isPinned?: boolean;
+  isEdited?: boolean;
+  editedAt?: string | null;
+  isDeleted?: boolean;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileType?: string | null;
+  fileSize?: number | null;
 }
 
 export async function fetchRooms(): Promise<Room[]> {
@@ -46,4 +54,13 @@ export async function fetchRoomById(id: string): Promise<RoomDetail> {
 
 export async function deleteRoom(id: string): Promise<void> {
   await api.delete(`/rooms/${id}`);
+}
+
+export async function uploadFile(file: File): Promise<{ fileUrl: string; fileName: string; fileType: string; fileSize: number }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post('/uploads', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
 }

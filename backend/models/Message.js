@@ -60,6 +60,48 @@ const messageSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  // Edit/delete support
+  isEdited: {
+    type: Boolean,
+    default: false,
+  },
+  editedAt: {
+    type: Date,
+    default: null,
+  },
+  originalContent: {
+    type: String,
+    default: null,
+  },
+  isDeleted: {
+    type: Boolean,
+    default: false,
+  },
+  deletedAt: {
+    type: Date,
+    default: null,
+  },
+  deletedBy: {
+    type: String,
+    default: null,
+  },
+  // File attachment support
+  fileUrl: {
+    type: String,
+    default: null,
+  },
+  fileName: {
+    type: String,
+    default: null,
+  },
+  fileType: {
+    type: String,
+    default: null,
+  },
+  fileSize: {
+    type: Number,
+    default: null,
+  },
 }, {
   timestamps: true,
 });
