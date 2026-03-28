@@ -43,7 +43,7 @@ const features = [
 ];
 
 const stats = [
-  { value: 'Gemini 1.5', label: 'AI Model' },
+  { value: 'Gemini 2.5', label: 'AI Model' },
   { value: 'Realtime', label: 'WebSocket' },
   { value: 'OAuth2', label: 'Google Auth' },
   { value: '∞', label: 'Conversations' },
@@ -222,7 +222,7 @@ export default function Landing() {
           ✦ built with ☕ + gemini · ChatSphere {new Date().getFullYear()}
         </p>
         <p className="text-[10px] text-gray-700 mt-2">
-          React · TypeScript · Node.js · MongoDB · Socket.IO · Gemini 1.5 Flash
+          React · TypeScript · Node.js · MongoDB · Socket.IO · Gemini 2.5 Pro
         </p>
       </footer>
     </div>

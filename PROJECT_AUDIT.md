@@ -3,7 +3,7 @@
 ## Current State
 
 - Frontend: React 18, TypeScript, Vite, Zustand, Framer Motion, Socket.IO client.
-- Backend: Express, Mongoose, Socket.IO, JWT auth, Google OAuth, Gemini `gemini-2.0-flash`.
+- Backend: Express, Mongoose, Socket.IO, JWT auth, Google OAuth, Gemini `gemini-2.5-pro`.
 - Persistence: MongoDB for users, conversations, rooms, messages, polls, memory, import sessions, prompt templates, and conversation insights.
 - Auth: local email/password, refresh token rotation, Google OAuth exchange flow.
 

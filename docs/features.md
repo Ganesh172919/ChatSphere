@@ -3,7 +3,7 @@
 ChatSphere is designed to provide a rich, real-time messaging experience augmented with deep AI reasoning, comprehensive moderation tools, and analytics.
 
 ## 1. Deep Reasoning AI
-Powered by Google's Gemini 1.5 Flash, the internal AI is capable of understanding complex queries, providing structured multi-angle analyses, and persisting context across conversational turns. It is optimized for both speed and reasoning depth.
+Powered by Google's Gemini 2.5 Pro, the internal AI is capable of understanding complex queries, providing structured multi-angle analyses, and persisting context across conversational turns. It is optimized for both speed and reasoning depth.
 
 ## 2. Solo Chat (Private AI Conversations)
 Users can engage in one-on-one sessions with the Gemini AI. 

@@ -15,7 +15,7 @@ const DEFAULT_OPENROUTER_MODELS = [
 
 const DEFAULT_HUGGINGFACE_MODEL = 'meta-llama/Llama-3.1-8B-Instruct:cerebras';
 const DEFAULT_GROK_MODEL = 'grok-2-latest';
-const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-pro';
 
 const MODEL_NAME = process.env.DEFAULT_AI_MODEL
   || process.env.OPENROUTER_DEFAULT_MODEL
