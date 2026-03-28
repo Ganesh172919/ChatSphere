@@ -1,8 +1,8 @@
-require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { Server } = require('socket.io');
 const passport = require('passport');
 const logger = require('./helpers/logger');
@@ -22,6 +22,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const userRoutes = require('./routes/users');
 const searchRoutes = require('./routes/search');
 const aiRoutes = require('./routes/ai');
+const projectRoutes = require('./routes/projects');
 const settingsRoutes = require('./routes/settings');
 const pollRoutes = require('./routes/polls');
 const groupRoutes = require('./routes/groups');
@@ -45,7 +46,7 @@ const User = require('./models/User');
 const { isValidObjectId, findRoomMember, hasRoomRole } = require('./helpers/validate');
 
 // Services
-const { sendGroupMessage, getAvailableModels, resolveModel } = require('./services/gemini');
+const { sendGroupMessage, getAvailableModels, refreshModelCatalogs, resolveModel } = require('./services/gemini');
 const { consumeAiQuota } = require('./services/aiQuota');
 const { getRoomInsight, refreshRoomInsight } = require('./services/conversationInsights');
 const { formatMessage: sharedFormatMessage, validateAttachmentPayload: sharedValidateAttachmentPayload } = require('./services/messageFormatting');
@@ -105,6 +106,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/projects', projectRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/polls', pollRoutes);
 app.use('/api/groups', groupRoutes);
@@ -1095,27 +1097,51 @@ const PORT = process.env.PORT || 3000;
 
 async function startServer() {
   await connectDB();
+  await refreshModelCatalogs().catch(() => {});
   const configuredModels = getAvailableModels({ includeFallback: false });
+  const providerCounts = configuredModels.reduce((accumulator, model) => {
+    accumulator[model.provider] = (accumulator[model.provider] || 0) + 1;
+    return accumulator;
+  }, {});
 
-  server.listen(PORT, () => {
-    console.log(`\n✦ ChatSphere server running on port ${PORT}`);
-    console.log(`  → API:      http://localhost:${PORT}/api`);
-    console.log(`  → Socket:   ws://localhost:${PORT}`);
-    console.log(`  → Client:   ${CLIENT_URL}`);
-    console.log(`  → Database: MongoDB`);
-    if (configuredModels.length === 0) {
-      console.log('⚠ [AI] No provider-backed AI models are configured. Add API keys in backend/.env');
-    } else {
-      console.log('→ [AI] Available models loaded:');
-      configuredModels.forEach((model, index) => {
-        console.log(`  ${index + 1}. ${model.id} (${model.provider})`);
-      });
-    }
-    console.log();
+  await new Promise((resolve, reject) => {
+    const handleError = (error) => {
+      server.off('listening', handleListening);
+      reject(error);
+    };
+
+    const handleListening = () => {
+      server.off('error', handleError);
+      resolve();
+    };
+
+    server.once('error', handleError);
+    server.once('listening', handleListening);
+    server.listen(PORT);
   });
+
+  console.log(`\n✦ ChatSphere server running on port ${PORT}`);
+  console.log(`  → API:      http://localhost:${PORT}/api`);
+  console.log(`  → Socket:   ws://localhost:${PORT}`);
+  console.log(`  → Client:   ${CLIENT_URL}`);
+  console.log(`  → Database: MongoDB`);
+  if (configuredModels.length === 0) {
+    console.log('⚠ [AI] No provider-backed AI models are configured. Add API keys in backend/.env');
+  } else {
+    console.log('→ [AI] Available models loaded:');
+    console.log(`  total models: ${configuredModels.length}`);
+    Object.entries(providerCounts).forEach(([provider, count]) => {
+      console.log(`  - ${provider}: ${count}`);
+    });
+  }
+  console.log();
 }
 
 startServer().catch((err) => {
-  console.error('Failed to start server:', err);
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Stop the existing process using port ${PORT}, or change PORT in backend/.env.`);
+  } else {
+    console.error('Failed to start server:', err);
+  }
   process.exit(1);
 });

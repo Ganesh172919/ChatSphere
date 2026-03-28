@@ -7,6 +7,7 @@ const {
   MODEL_NAME,
   getAvailableModels,
   getJsonFromModel,
+  refreshModelCatalogs,
   resolveModel,
 } = require('../services/gemini');
 const { getPromptTemplate } = require('../services/promptCatalog');
@@ -31,17 +32,27 @@ function buildSmartReplyFallback(messages) {
 
 router.get('/models', authMiddleware, async (req, res) => {
   try {
-    const models = getAvailableModels({ includeFallback: false }).map((model) => ({
+    await refreshModelCatalogs();
+    const providerModels = getAvailableModels({ includeFallback: false }).map((model) => ({
       id: model.id,
       label: model.label,
       provider: model.provider,
       supportsFiles: Boolean(model.supportsFiles),
     }));
+    const models = [
+      {
+        id: 'auto',
+        label: 'Auto Route (task-aware)',
+        provider: 'system',
+        supportsFiles: true,
+      },
+      ...providerModels,
+    ];
     const defaultModel = resolveModel(MODEL_NAME, { includeFallback: false });
 
     res.json({
       models,
-      defaultModelId: defaultModel?.id || '',
+      defaultModelId: models.some((model) => model.id === 'auto') ? 'auto' : defaultModel?.id || '',
       hasConfiguredModels: models.length > 0,
       emptyStateMessage: models.length > 0 ? '' : 'No AI models are configured. Add provider API keys in backend/.env.',
     });

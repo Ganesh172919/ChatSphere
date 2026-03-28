@@ -4,6 +4,7 @@ const Message = require('../models/Message');
 const Room = require('../models/Room');
 const Conversation = require('../models/Conversation');
 const User = require('../models/User');
+const { getRoomMemberRole } = require('../helpers/validate');
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ router.get('/', authMiddleware, async (req, res) => {
       Conversation.countDocuments({ userId }),
       // Only count rooms the user is a member of
       Room.find({ 'members.userId': userId })
-        .select('name description tags createdAt')
+        .select('name description tags createdAt members creatorId')
         .sort({ createdAt: -1 })
         .limit(5)
         .lean(),
@@ -73,6 +74,8 @@ router.get('/', authMiddleware, async (req, res) => {
         description: r.description,
         tags: r.tags,
         createdAt: r.createdAt,
+        memberCount: Array.isArray(r.members) ? r.members.length : 0,
+        currentUserRole: getRoomMemberRole(r, userId),
       })),
       activity,
     });

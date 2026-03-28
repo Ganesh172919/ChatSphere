@@ -43,6 +43,38 @@ const conversationMessageSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  requestedModelId: {
+    type: String,
+    default: null,
+  },
+  processingMs: {
+    type: Number,
+    default: null,
+  },
+  promptTokens: {
+    type: Number,
+    default: null,
+  },
+  completionTokens: {
+    type: Number,
+    default: null,
+  },
+  totalTokens: {
+    type: Number,
+    default: null,
+  },
+  autoMode: {
+    type: Boolean,
+    default: false,
+  },
+  autoComplexity: {
+    type: String,
+    default: null,
+  },
+  fallbackUsed: {
+    type: Boolean,
+    default: false,
+  },
 }, { _id: false });
 
 const conversationSchema = new mongoose.Schema({
@@ -59,6 +91,16 @@ const conversationSchema = new mongoose.Schema({
     maxlength: 100,
   },
   messages: [conversationMessageSchema],
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null,
+    index: true,
+  },
+  projectName: {
+    type: String,
+    default: null,
+  },
   sourceType: {
     type: String,
     enum: ['native', 'chatgpt', 'claude', 'markdown', 'text', 'json'],
@@ -84,5 +126,6 @@ const conversationSchema = new mongoose.Schema({
 
 // Index for user-specific queries sorted by recency
 conversationSchema.index({ userId: 1, updatedAt: -1 });
+conversationSchema.index({ userId: 1, projectId: 1, updatedAt: -1 });
 
 module.exports = mongoose.model('Conversation', conversationSchema);

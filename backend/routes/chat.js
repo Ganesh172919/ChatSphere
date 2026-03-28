@@ -6,6 +6,7 @@ const { retrieveRelevantMemories, markMemoriesUsed, upsertMemoryEntries } = requ
 const { getConversationInsight, refreshConversationInsight } = require('../services/conversationInsights');
 const { validateAttachmentPayload } = require('../services/messageFormatting');
 const Conversation = require('../models/Conversation');
+const Project = require('../models/Project');
 const logger = require('../helpers/logger');
 
 const router = express.Router();
@@ -13,7 +14,7 @@ const router = express.Router();
 // POST /api/chat - Solo AI chat
 router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
   try {
-    const { message, conversationId, history, modelId, attachment } = req.body;
+    const { message, conversationId, history, modelId, attachment, projectId } = req.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ error: 'Message is required' });
@@ -34,24 +35,52 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       ? await getConversationInsight(req.user.id, conversationId)
       : null;
 
-    const response = await sendMessage(chatHistory, message.trim(), {
-      memoryEntries,
-      insight: existingInsight,
-      modelId,
-      attachment,
-    });
-
     let conversation = null;
     if (conversationId) {
       conversation = await Conversation.findOne({ _id: conversationId, userId: req.user.id });
     }
 
+    const resolvedProjectId = projectId || conversation?.projectId || null;
+    let project = null;
+    if (resolvedProjectId) {
+      project = await Project.findOne({
+        _id: resolvedProjectId,
+        userId: req.user.id,
+      }).lean();
+
+      if (!project) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
+    }
+
+    if (
+      conversation
+      && conversation.projectId
+      && projectId
+      && conversation.projectId.toString() !== String(projectId)
+    ) {
+      return res.status(400).json({ error: 'Conversation belongs to a different project' });
+    }
+
+    const response = await sendMessage(chatHistory, message.trim(), {
+      memoryEntries,
+      insight: existingInsight,
+      modelId,
+      attachment,
+      project,
+    });
+
     if (!conversation) {
       conversation = new Conversation({
         userId: req.user.id,
         title: message.trim().slice(0, 80) + (message.length > 80 ? '...' : ''),
+        projectId: project?._id || null,
+        projectName: project?.name || null,
         messages: [],
       });
+    } else if (project && !conversation.projectId) {
+      conversation.projectId = project._id;
+      conversation.projectName = project.name;
     }
 
     const memoryRefs = memoryEntries.map((entry) => ({
@@ -77,6 +106,14 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       memoryRefs,
       modelId: response.model.id,
       provider: response.model.provider,
+      requestedModelId: response.routing?.requestedModelId || modelId || null,
+      processingMs: response.processingMs || null,
+      promptTokens: response.usage?.promptTokens ?? null,
+      completionTokens: response.usage?.completionTokens ?? null,
+      totalTokens: response.usage?.totalTokens ?? null,
+      autoMode: Boolean(response.routing?.autoMode),
+      autoComplexity: response.routing?.complexity || null,
+      fallbackUsed: Boolean(response.routing?.fallbackUsed),
     });
 
     await conversation.save();
@@ -111,6 +148,14 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       insight,
       modelId: response.model.id,
       provider: response.model.provider,
+      requestedModelId: response.routing?.requestedModelId || modelId || null,
+      processingMs: response.processingMs || null,
+      promptTokens: response.usage?.promptTokens ?? null,
+      completionTokens: response.usage?.completionTokens ?? null,
+      totalTokens: response.usage?.totalTokens ?? null,
+      autoMode: Boolean(response.routing?.autoMode),
+      autoComplexity: response.routing?.complexity || null,
+      fallbackUsed: Boolean(response.routing?.fallbackUsed),
     });
   } catch (err) {
     logger.error('CHAT_REQUEST_FAILED', 'Failed to complete chat request', {

@@ -8,8 +8,14 @@ const router = express.Router();
 // GET /api/conversations - List user's conversations
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const conversations = await Conversation.find({ userId: req.user.id })
-      .select('title messages createdAt updatedAt sourceType sourceLabel')
+    const filters = { userId: req.user.id };
+    if (req.query.projectId) {
+      filters.projectId = req.query.projectId === 'none' ? null : req.query.projectId;
+    }
+
+    const conversations = await Conversation.find(filters)
+      .select('title messages createdAt updatedAt sourceType sourceLabel projectId projectName')
+      .populate('projectId', 'name description')
       .sort({ updatedAt: -1 })
       .limit(50)
       .lean();
@@ -17,6 +23,15 @@ router.get('/', authMiddleware, async (req, res) => {
     res.json(conversations.map((conversation) => ({
       id: conversation._id.toString(),
       title: conversation.title,
+      project: conversation.projectId ? {
+        id: conversation.projectId._id.toString(),
+        name: conversation.projectId.name,
+        description: conversation.projectId.description || '',
+      } : conversation.projectName ? {
+        id: '',
+        name: conversation.projectName,
+        description: '',
+      } : null,
       sourceType: conversation.sourceType || 'native',
       sourceLabel: conversation.sourceLabel || 'ChatSphere',
       messageCount: conversation.messages.length,
@@ -36,7 +51,9 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const conversation = await Conversation.findOne({
       _id: req.params.id,
       userId: req.user.id,
-    }).lean();
+    })
+      .populate('projectId', 'name description')
+      .lean();
 
     if (!conversation) {
       return res.status(404).json({ error: 'Conversation not found' });
@@ -45,6 +62,15 @@ router.get('/:id', authMiddleware, async (req, res) => {
     res.json({
       id: conversation._id.toString(),
       title: conversation.title,
+      project: conversation.projectId ? {
+        id: conversation.projectId._id.toString(),
+        name: conversation.projectId.name,
+        description: conversation.projectId.description || '',
+      } : conversation.projectName ? {
+        id: '',
+        name: conversation.projectName,
+        description: '',
+      } : null,
       sourceType: conversation.sourceType || 'native',
       sourceLabel: conversation.sourceLabel || 'ChatSphere',
       messages: conversation.messages.map((message) => ({
@@ -58,6 +84,14 @@ router.get('/:id', authMiddleware, async (req, res) => {
         fileSize: message.fileSize || null,
         modelId: message.modelId || null,
         provider: message.provider || null,
+        requestedModelId: message.requestedModelId || null,
+        processingMs: message.processingMs ?? null,
+        promptTokens: message.promptTokens ?? null,
+        completionTokens: message.completionTokens ?? null,
+        totalTokens: message.totalTokens ?? null,
+        autoMode: Boolean(message.autoMode),
+        autoComplexity: message.autoComplexity || null,
+        fallbackUsed: Boolean(message.fallbackUsed),
       })),
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
@@ -71,12 +105,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
 // GET /api/conversations/:id/insights
 router.get('/:id/insights', authMiddleware, async (req, res) => {
   try {
-    const insight = await getConversationInsight(req.user.id, req.params.id);
-    if (!insight) {
-      return res.status(404).json({ error: 'Conversation insight not found' });
-    }
-
-    res.json(insight);
+    const insight = await getConversationInsight(req.user.id, req.params.id, req.query.modelId || null);
+    res.json(insight || null);
   } catch (err) {
     console.error('Get conversation insight error:', err);
     res.status(500).json({ error: 'Failed to load conversation insight' });
@@ -95,9 +125,9 @@ router.post('/:id/actions/:action', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Conversation not found' });
     }
 
-    const insight = await refreshConversationInsight(req.user.id, conversation._id);
+    const insight = await refreshConversationInsight(req.user.id, conversation._id, req.body?.modelId || null);
     if (!insight) {
-      return res.status(404).json({ error: 'Conversation insight not found' });
+      return res.json({ insight: null, summary: '', decisions: [], actionItems: [] });
     }
 
     const action = req.params.action;

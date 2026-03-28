@@ -27,7 +27,7 @@ function buildFallbackInsight(messages, fallbackTitle = 'Untitled conversation')
   };
 }
 
-async function generateInsightPayload(messages, fallbackTitle) {
+async function generateInsightPayload(messages, fallbackTitle, modelId = null) {
   const conversationText = messages
     .slice(-20)
     .map((message) => `${message.role || message.username || 'speaker'}: ${message.content}`)
@@ -46,7 +46,7 @@ async function generateInsightPayload(messages, fallbackTitle) {
   let result = fallback;
 
   try {
-    result = await getJsonFromModel(prompt, fallback);
+    result = await getJsonFromModel(prompt, fallback, { modelId });
   } catch (error) {
     logger.warn('INSIGHT_FALLBACK', 'Using deterministic insight fallback', {
       fallbackTitle,
@@ -78,8 +78,8 @@ async function generateInsightPayload(messages, fallbackTitle) {
   };
 }
 
-async function saveInsight({ scopeType, scopeId, userId = null, conversationId = null, roomId = null, messages, fallbackTitle }) {
-  const payload = await generateInsightPayload(messages, fallbackTitle);
+async function saveInsight({ scopeType, scopeId, userId = null, conversationId = null, roomId = null, messages, fallbackTitle, modelId = null }) {
+  const payload = await generateInsightPayload(messages, fallbackTitle, modelId);
 
   logger.info('INSIGHT_SAVE', 'Persisting conversation insight', {
     scopeType,
@@ -116,7 +116,7 @@ async function saveInsight({ scopeType, scopeId, userId = null, conversationId =
   ).lean();
 }
 
-async function refreshConversationInsight(userId, conversationId) {
+async function refreshConversationInsight(userId, conversationId, modelId = null) {
   const conversation = await Conversation.findOne({ _id: conversationId, userId }).lean();
   if (!conversation) {
     return null;
@@ -129,10 +129,11 @@ async function refreshConversationInsight(userId, conversationId) {
     conversationId: conversation._id,
     messages: conversation.messages,
     fallbackTitle: conversation.title || 'Untitled conversation',
+    modelId,
   });
 }
 
-async function refreshRoomInsight(roomId) {
+async function refreshRoomInsight(roomId, modelId = null) {
   const messages = await Message.find({ roomId })
     .sort({ createdAt: -1 })
     .limit(40)
@@ -155,10 +156,11 @@ async function refreshRoomInsight(roomId) {
     roomId,
     messages: serialized,
     fallbackTitle: 'Room insight',
+    modelId,
   });
 }
 
-async function getConversationInsight(userId, conversationId) {
+async function getConversationInsight(userId, conversationId, modelId = null) {
   const existing = await ConversationInsight.findOne({
     scopeKey: buildScopeKey('conversation', conversationId, userId),
   }).lean();
@@ -167,10 +169,10 @@ async function getConversationInsight(userId, conversationId) {
     return existing;
   }
 
-  return refreshConversationInsight(userId, conversationId);
+  return refreshConversationInsight(userId, conversationId, modelId);
 }
 
-async function getRoomInsight(roomId) {
+async function getRoomInsight(roomId, modelId = null) {
   const existing = await ConversationInsight.findOne({
     scopeKey: buildScopeKey('room', roomId),
   }).lean();
@@ -179,7 +181,7 @@ async function getRoomInsight(roomId) {
     return existing;
   }
 
-  return refreshRoomInsight(roomId);
+  return refreshRoomInsight(roomId, modelId);
 }
 
 module.exports = {

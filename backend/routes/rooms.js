@@ -181,12 +181,8 @@ router.get('/:id/insights', authMiddleware, async (req, res) => {
       return res.status(error.status).json({ error: error.message });
     }
 
-    const insight = await getRoomInsight(room._id.toString());
-    if (!insight) {
-      return res.status(404).json({ error: 'Room insight not found' });
-    }
-
-    res.json(insight);
+    const insight = await getRoomInsight(room._id.toString(), req.query.modelId || null);
+    res.json(insight || null);
   } catch (err) {
     console.error('Get room insight error:', err);
     res.status(500).json({ error: 'Failed to load room insight' });
@@ -201,9 +197,9 @@ router.post('/:id/actions/:action', authMiddleware, async (req, res) => {
       return res.status(error.status).json({ error: error.message });
     }
 
-    const insight = await refreshRoomInsight(room._id.toString());
+    const insight = await refreshRoomInsight(room._id.toString(), req.body?.modelId || null);
     if (!insight) {
-      return res.status(404).json({ error: 'Room insight not found' });
+      return res.json({ insight: null, summary: '', decisions: [], actionItems: [] });
     }
 
     if (req.params.action === 'summarize') {
