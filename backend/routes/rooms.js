@@ -29,7 +29,7 @@ function formatRoomSummary(room, currentUserId, messageCount = 0) {
   };
 }
 
-async function ensureRoomMember(roomId, userId, selection = 'members creatorId') {
+async function ensureRoomMember(roomId, userId, selection = 'name description tags maxUsers members creatorId createdAt') {
   if (!isValidObjectId(roomId)) {
     return { room: null, error: { status: 400, message: 'Invalid room ID' } };
   }

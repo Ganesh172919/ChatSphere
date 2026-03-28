@@ -12,7 +12,7 @@ This guide matches the current codebase. ChatSphere runs locally with:
 - Node.js 18 or newer
 - npm
 - MongoDB running locally or a MongoDB Atlas connection string
-- A Gemini API key
+- An OpenRouter API key for the primary AI path
 
 Optional:
 
@@ -41,9 +41,15 @@ Fill `backend/.env`:
 MONGO_URI=mongodb://localhost:27017/chatsphere
 JWT_ACCESS_SECRET=replace_with_a_long_random_string
 JWT_REFRESH_SECRET=replace_with_a_different_long_random_string
-GEMINI_API_KEY=your_gemini_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini
 CLIENT_URL=http://localhost:5173
 PORT=3000
+
+# Optional direct-provider fallbacks
+GEMINI_API_KEY=
+GROK_API_KEY=
+HUGGINGFACE_API_KEY=
 
 # Optional Google OAuth
 GOOGLE_CLIENT_ID=
@@ -71,6 +77,7 @@ Expected local behavior:
 
 - The backend connects to MongoDB.
 - File uploads are stored in `backend/uploads`.
+- The AI model picker is populated from the configured provider keys.
 - If SMTP is missing, password reset links are printed to the backend console.
 - If Google OAuth is missing, the app still runs; Google sign-in just shows a friendly local-setup error.
 
@@ -91,8 +98,10 @@ Open [http://localhost:5173](http://localhost:5173).
 3. Create or join a room.
 4. Send a text message.
 5. Upload an image or file in a room.
-6. Try edit, delete, pin, and reaction actions on a room message.
-7. Open the search page and verify both room-message and solo-conversation search.
+6. Switch models in solo chat and test a file-assisted AI prompt.
+7. Mention `@ai` inside a room message and confirm the room assistant responds.
+8. Try edit, delete, pin, and reaction actions on a room message.
+9. Open the search page and verify both room-message and solo-conversation search.
 
 ## Google OAuth Setup
 

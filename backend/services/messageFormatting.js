@@ -29,6 +29,8 @@ function formatMessage(message) {
     fileType: message.fileType || null,
     fileSize: message.fileSize || null,
     memoryRefs: formatMemoryRefs(message.memoryRefs || []),
+    modelId: message.modelId || null,
+    provider: message.provider || null,
   };
 }
 

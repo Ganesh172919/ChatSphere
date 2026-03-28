@@ -145,7 +145,14 @@ Allowed reactions:
 ```json
 {
   "roomId": "room-id",
-  "prompt": "Summarize the discussion"
+  "prompt": "Summarize the discussion",
+  "modelId": "openai/gpt-4o-mini",
+  "attachment": {
+    "fileUrl": "/api/uploads/notes.txt",
+    "fileName": "notes.txt",
+    "fileType": "text/plain",
+    "fileSize": 1024
+  }
 }
 ```
 
@@ -154,6 +161,8 @@ Notes:
 - room membership is required
 - flood control applies
 - per-user AI quota applies
+- the caller can choose the model via `modelId`
+- the AI prompt can include one uploaded file attachment
 - relevant user memory is retrieved before the AI request
 - the saved AI reply can contain `memoryRefs`
 - room insight is refreshed after the AI response is stored
@@ -235,6 +244,8 @@ Example payload:
   "timestamp": "2026-03-28T10:00:10.000Z",
   "isAI": true,
   "triggeredBy": "ravi",
+  "modelId": "openai/gpt-4o-mini",
+  "provider": "openrouter",
   "memoryRefs": [
     {
       "id": "memory-id",

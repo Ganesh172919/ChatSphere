@@ -54,6 +54,8 @@ interface Props {
   index?: number;
   memoryRefs?: MemoryReference[];
   sentiment?: { sentiment: string; emoji: string; confidence: number } | null;
+  modelId?: string | null;
+  provider?: string | null;
 }
 
 const REACTION_EMOJIS = [
@@ -133,6 +135,8 @@ export default function MessageBubble({
   index = 0,
   memoryRefs = [],
   sentiment = null,
+  modelId = null,
+  provider = null,
 }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -144,6 +148,7 @@ export default function MessageBubble({
   const isLong = words > 400;
   const displayContent = isLong && !isExpanded ? `${content.slice(0, 1500)}...` : content;
   const isImage = Boolean(fileUrl && fileType?.startsWith('image/'));
+  const aiMetaLabel = [modelId, provider].filter(Boolean).join(' · ');
 
   const formatTime = (ts: string) => {
     return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -216,7 +221,7 @@ export default function MessageBubble({
       transition={{ delay: index * 0.05, duration: 0.3 }}
       className={`flex gap-3 px-4 py-2 group ${isUser && !showReactions ? 'flex-row-reverse' : 'flex-row'}`}
       role="article"
-      aria-label={`Message from ${username || role}`}
+      aria-label={`Message from ${username || role}${aiMetaLabel ? ` using ${aiMetaLabel}` : ''}`}
     >
       {!isUser || showReactions ? (
         <div

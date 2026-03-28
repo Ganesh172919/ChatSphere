@@ -5,7 +5,7 @@ import { Plus, Search, RefreshCw } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import RoomCard from '../components/RoomCard';
 import CreateRoomModal from '../components/CreateRoomModal';
-import { fetchRooms, createRoom } from '../api/rooms';
+import { fetchRooms, createRoom, joinRoomById } from '../api/rooms';
 import type { Room } from '../api/rooms';
 import toast from 'react-hot-toast';
 
@@ -15,6 +15,7 @@ export default function Rooms() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
 
   const loadRooms = async () => {
     setIsLoading(true);
@@ -45,8 +46,17 @@ export default function Rooms() {
     }
   };
 
-  const handleJoinRoom = (roomId: string) => {
-    navigate(`/group/${roomId}`);
+  const handleJoinRoom = async (roomId: string) => {
+    setJoiningRoomId(roomId);
+    try {
+      await joinRoomById(roomId);
+      navigate(`/group/${roomId}`);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } } };
+      toast.error(error.response?.data?.error || 'Failed to join room');
+    } finally {
+      setJoiningRoomId(null);
+    }
   };
 
   const filteredRooms = rooms.filter((room) => {
@@ -132,7 +142,10 @@ export default function Rooms() {
                 description={room.description}
                 tags={room.tags}
                 messageCount={room.messageCount}
-                onJoin={handleJoinRoom}
+                memberCount={room.memberCount}
+                isMember={room.isMember}
+                isJoining={joiningRoomId === room.id}
+                onJoin={(id) => void handleJoinRoom(id)}
                 index={i}
               />
             ))}

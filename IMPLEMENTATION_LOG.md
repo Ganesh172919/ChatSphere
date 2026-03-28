@@ -10,6 +10,10 @@
 - Enforced admin middleware on analytics.
 - Added per-user AI quota enforcement for REST chat and socket-triggered room AI.
 - Updated room and AI routes to use centralized prompt handling.
+- Refactored the AI service into a provider-aware gateway with OpenRouter-first routing.
+- Added visible model discovery endpoint plus model/provider persistence on AI messages.
+- Added attachment-aware solo chat and room AI prompts.
+- Fixed room detail loading so joined rooms render full metadata.
 
 ## Frontend
 
@@ -23,9 +27,13 @@
 - Hid admin navigation and admin page access for non-admins.
 - Wired profile bio persistence through the auth state.
 - Added message-level memory usage display and optional room sentiment badges.
+- Added model selectors to solo chat and room AI inputs.
+- Added explicit room join handling from the rooms directory.
+- Added file upload support to solo AI chat input.
 
 ## Docs
 
 - Added `backend/.env.example`.
 - Updated API and websocket docs to reflect current routes and payloads.
 - Added audit, architecture, roadmap, metrics, and changelog files.
+- Updated setup and README docs for the multi-provider AI gateway.

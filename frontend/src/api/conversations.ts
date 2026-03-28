@@ -17,7 +17,18 @@ export interface ConversationDetail {
   title: string;
   sourceType?: string;
   sourceLabel?: string;
-  messages: Array<{ role: string; content: string; timestamp: string; memoryRefs?: MemoryReference[] }>;
+  messages: Array<{
+    role: string;
+    content: string;
+    timestamp: string;
+    memoryRefs?: MemoryReference[];
+    fileUrl?: string | null;
+    fileName?: string | null;
+    fileType?: string | null;
+    fileSize?: number | null;
+    modelId?: string | null;
+    provider?: string | null;
+  }>;
   createdAt: string;
   updatedAt: string;
 }

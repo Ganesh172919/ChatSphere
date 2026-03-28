@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { sendChatMessage } from '../api/chat';
+import { sendChatMessage, type ChatAttachment } from '../api/chat';
 import {
   deleteConversation as deleteConversationRequest,
   fetchConversation,
@@ -76,6 +76,12 @@ export function useChat() {
           content: message.content,
           timestamp: message.timestamp,
           memoryRefs: message.memoryRefs || [],
+          fileUrl: message.fileUrl || null,
+          fileName: message.fileName || null,
+          fileType: message.fileType || null,
+          fileSize: message.fileSize || null,
+          modelId: message.modelId || null,
+          provider: message.provider || null,
         }));
 
         setConversationMessages(activeConversation.id, messages);
@@ -93,7 +99,7 @@ export function useChat() {
   }, [conversations, getActiveConversation, setConversationMessages, updateConversationInsight]);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, options?: { modelId?: string; attachment?: ChatAttachment | null }) => {
       let conversation = getActiveConversation();
 
       if (!conversation) {
@@ -118,6 +124,12 @@ export function useChat() {
             content: message.content,
             timestamp: message.timestamp,
             memoryRefs: message.memoryRefs || [],
+            fileUrl: message.fileUrl || null,
+            fileName: message.fileName || null,
+            fileType: message.fileType || null,
+            fileSize: message.fileSize || null,
+            modelId: message.modelId || null,
+            provider: message.provider || null,
           }));
           setConversationMessages(conversation.id, historySource);
         } catch (error) {
@@ -129,6 +141,10 @@ export function useChat() {
         role: 'user',
         content,
         timestamp: new Date().toISOString(),
+        fileUrl: options?.attachment?.fileUrl || null,
+        fileName: options?.attachment?.fileName || null,
+        fileType: options?.attachment?.fileType || null,
+        fileSize: options?.attachment?.fileSize || null,
       };
 
       addMessage(conversation.id, userMessage);
@@ -140,7 +156,13 @@ export function useChat() {
           parts: [{ text: message.content }],
         }));
 
-        const response = await sendChatMessage(content, history, conversation.serverId);
+        const response = await sendChatMessage(
+          content,
+          history,
+          conversation.serverId,
+          options?.modelId,
+          options?.attachment || null
+        );
 
         if (response.conversationId && !conversation.serverId) {
           updateConversationServerId(conversation.id, response.conversationId);
@@ -151,6 +173,8 @@ export function useChat() {
           content: response.content,
           timestamp: response.timestamp,
           memoryRefs: response.memoryRefs || [],
+          modelId: response.modelId || null,
+          provider: response.provider || null,
         };
 
         addMessage(conversation.id, assistantMessage);

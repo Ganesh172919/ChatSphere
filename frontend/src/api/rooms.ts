@@ -40,6 +40,8 @@ export interface GroupMessage {
   fileType?: string | null;
   fileSize?: number | null;
   memoryRefs?: MemoryReference[];
+  modelId?: string | null;
+  provider?: string | null;
 }
 
 export async function fetchRooms(): Promise<Room[]> {

@@ -4,6 +4,7 @@ const aiQuotaMiddleware = require('../middleware/aiQuota');
 const { sendMessage } = require('../services/gemini');
 const { retrieveRelevantMemories, markMemoriesUsed, upsertMemoryEntries } = require('../services/memory');
 const { getConversationInsight, refreshConversationInsight } = require('../services/conversationInsights');
+const { validateAttachmentPayload } = require('../services/messageFormatting');
 const Conversation = require('../models/Conversation');
 
 const router = express.Router();
@@ -11,10 +12,15 @@ const router = express.Router();
 // POST /api/chat - Solo AI chat
 router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
   try {
-    const { message, conversationId, history } = req.body;
+    const { message, conversationId, history, modelId, attachment } = req.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const attachmentError = validateAttachmentPayload(attachment || {});
+    if (attachmentError) {
+      return res.status(400).json({ error: attachmentError });
     }
 
     const chatHistory = Array.isArray(history) ? history : [];
@@ -27,9 +33,11 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       ? await getConversationInsight(req.user.id, conversationId)
       : null;
 
-    const responseText = await sendMessage(chatHistory, message.trim(), {
+    const response = await sendMessage(chatHistory, message.trim(), {
       memoryEntries,
       insight: existingInsight,
+      modelId,
+      attachment,
     });
 
     let conversation = null;
@@ -55,13 +63,19 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       role: 'user',
       content: message.trim(),
       timestamp: new Date(),
+      fileUrl: attachment?.fileUrl || null,
+      fileName: attachment?.fileName || null,
+      fileType: attachment?.fileType || null,
+      fileSize: attachment?.fileSize || null,
     });
 
     conversation.messages.push({
       role: 'assistant',
-      content: responseText,
+      content: response.content,
       timestamp: new Date(),
       memoryRefs,
+      modelId: response.model.id,
+      provider: response.model.provider,
     });
 
     await conversation.save();
@@ -80,10 +94,12 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
     res.json({
       conversationId: conversation._id.toString(),
       role: 'model',
-      content: responseText,
+      content: response.content,
       timestamp: new Date().toISOString(),
       memoryRefs,
       insight,
+      modelId: response.model.id,
+      provider: response.model.provider,
     });
   } catch (err) {
     console.error('Chat error:', err);

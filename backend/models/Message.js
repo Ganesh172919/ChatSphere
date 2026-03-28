@@ -111,6 +111,14 @@ const messageSchema = new mongoose.Schema({
     summary: { type: String, required: true },
     score: { type: Number, default: null },
   }],
+  modelId: {
+    type: String,
+    default: null,
+  },
+  provider: {
+    type: String,
+    default: null,
+  },
 }, {
   timestamps: true,
 });

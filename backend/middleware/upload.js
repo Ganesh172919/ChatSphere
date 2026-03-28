@@ -17,6 +17,14 @@ const ALLOWED_TYPES = {
   'image/webp': '.webp',
   'application/pdf': '.pdf',
   'text/plain': '.txt',
+  'text/markdown': '.md',
+  'text/csv': '.csv',
+  'application/json': '.json',
+  'application/xml': '.xml',
+  'text/javascript': '.js',
+  'application/javascript': '.js',
+  'text/x-typescript': '.ts',
+  'application/x-typescript': '.ts',
 };
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB

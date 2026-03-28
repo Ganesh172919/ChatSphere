@@ -1,5 +1,12 @@
 import api from './axios';
 
+export interface AIModel {
+  id: string;
+  label: string;
+  provider: string;
+  supportsFiles: boolean;
+}
+
 export interface SmartReplySuggestions {
   suggestions: string[];
 }
@@ -15,20 +22,26 @@ export interface GrammarResult {
   suggestions: string[];
 }
 
+export async function fetchAvailableModels(): Promise<{ models: AIModel[]; defaultModelId: string }> {
+  const { data } = await api.get<{ models: AIModel[]; defaultModelId: string }>('/ai/models');
+  return data;
+}
+
 export async function getSmartReplies(
   messages: Array<{ username?: string; role?: string; content: string }>,
-  context?: string
+  context?: string,
+  modelId?: string
 ): Promise<SmartReplySuggestions> {
-  const { data } = await api.post<SmartReplySuggestions>('/ai/smart-replies', { messages, context });
+  const { data } = await api.post<SmartReplySuggestions>('/ai/smart-replies', { messages, context, modelId });
   return data;
 }
 
-export async function analyzeSentiment(text: string): Promise<SentimentAnalysis> {
-  const { data } = await api.post<SentimentAnalysis>('/ai/sentiment', { text });
+export async function analyzeSentiment(text: string, modelId?: string): Promise<SentimentAnalysis> {
+  const { data } = await api.post<SentimentAnalysis>('/ai/sentiment', { text, modelId });
   return data;
 }
 
-export async function checkGrammar(text: string): Promise<GrammarResult> {
-  const { data } = await api.post<GrammarResult>('/ai/grammar', { text });
+export async function checkGrammar(text: string, modelId?: string): Promise<GrammarResult> {
+  const { data } = await api.post<GrammarResult>('/ai/grammar', { text, modelId });
   return data;
 }

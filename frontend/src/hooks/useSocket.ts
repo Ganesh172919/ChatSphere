@@ -125,8 +125,13 @@ export function useSocket() {
     return emitWithAck('add_reaction', { roomId, messageId, emoji });
   }, [emitWithAck]);
 
-  const triggerAi = useCallback((roomId: string, prompt: string) => {
-    return emitWithAck('trigger_ai', { roomId, prompt });
+  const triggerAi = useCallback((roomId: string, prompt: string, modelId?: string, attachment?: {
+    fileUrl: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+  }) => {
+    return emitWithAck('trigger_ai', { roomId, prompt, modelId, attachment });
   }, [emitWithAck]);
 
   const editMessage = useCallback((roomId: string, messageId: string, newContent: string) => {

@@ -229,6 +229,8 @@ function formatMessage(msg) {
     fileType: msg.fileType || null,
     fileSize: msg.fileSize || null,
     memoryRefs: msg.memoryRefs || [],
+    modelId: msg.modelId || null,
+    provider: msg.provider || null,
   };
 }
 
@@ -688,12 +690,14 @@ io.on('connection', async (socket) => {
   });
 
   // -- trigger_ai (with membership check and throttle) --
-  socket.on('trigger_ai', async ({ roomId, prompt }, callback) => {
+  socket.on('trigger_ai', async ({ roomId, prompt, modelId, attachment }, callback) => {
     const ack = getAck(callback);
     if (isFlooded(socket, ack)) return;
 
     if (!prompt || prompt.trim().length === 0) return emitSocketError(socket, ack, 'Prompt is required');
     if (prompt.trim().length > 4000) return emitSocketError(socket, ack, 'Prompt must be under 4000 characters');
+    const attachmentError = validateAttachmentPayload(attachment || {});
+    if (attachmentError) return emitSocketError(socket, ack, attachmentError);
 
     io.to(roomId).emit('ai_thinking', { roomId, status: true });
 
@@ -731,15 +735,17 @@ io.on('connection', async (socket) => {
         sourceRoomId: roomId,
       });
 
-      const responseText = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username, {
+      const response = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username, {
         memoryEntries,
         insight,
         roomName: room.name,
+        modelId,
+        attachment,
       });
 
       // Update AI history in room
       room.aiHistory.push({ role: 'user', parts: [{ text: `[${socket.user.username} asks]: ${prompt.trim()}` }] });
-      room.aiHistory.push({ role: 'model', parts: [{ text: responseText }] });
+      room.aiHistory.push({ role: 'model', parts: [{ text: response.content }] });
 
       // Trim AI history to last 40 entries + system prompt
       if (room.aiHistory.length > 42) {
@@ -752,11 +758,13 @@ io.on('connection', async (socket) => {
         roomId,
         userId: 'ai',
         username: AI_USERNAME,
-        content: responseText,
+        content: response.content,
         isAI: true,
         triggeredBy: socket.user.username,
         status: 'delivered',
         reactions: new Map(),
+        modelId: response.model.id,
+        provider: response.model.provider,
         memoryRefs: memoryEntries.slice(0, 5).map((entry) => ({
           id: entry._id.toString(),
           summary: entry.summary,

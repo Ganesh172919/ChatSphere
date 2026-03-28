@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Users, MessageSquare, ArrowRight } from 'lucide-react';
+import { Users, MessageSquare, ArrowRight, Loader2 } from 'lucide-react';
 
 interface Props {
   id: string;
@@ -7,11 +7,25 @@ interface Props {
   description: string;
   tags: string[];
   messageCount: number;
+  memberCount?: number;
+  isMember?: boolean;
+  isJoining?: boolean;
   onJoin: (id: string) => void;
   index?: number;
 }
 
-export default function RoomCard({ id, name, description, tags, messageCount, onJoin, index = 0 }: Props) {
+export default function RoomCard({
+  id,
+  name,
+  description,
+  tags,
+  messageCount,
+  memberCount = 0,
+  isMember = false,
+  isJoining = false,
+  onJoin,
+  index = 0,
+}: Props) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -30,9 +44,15 @@ export default function RoomCard({ id, name, description, tags, messageCount, on
           <h3 className="font-display font-bold text-lg text-white group-hover:text-neon-purple transition-colors truncate mr-2">
             {name}
           </h3>
-          <div className="flex items-center gap-1 text-gray-500 flex-shrink-0">
-            <MessageSquare size={12} />
-            <span className="text-xs">{messageCount}</span>
+          <div className="flex items-center gap-3 text-gray-500 flex-shrink-0">
+            <div className="flex items-center gap-1">
+              <Users size={12} />
+              <span className="text-xs">{memberCount}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <MessageSquare size={12} />
+              <span className="text-xs">{messageCount}</span>
+            </div>
           </div>
         </div>
 
@@ -64,10 +84,11 @@ export default function RoomCard({ id, name, description, tags, messageCount, on
         <div className="flex items-center justify-between pt-3 border-t border-navy-700/50">
           <div className="flex items-center gap-1.5 text-gray-500">
             <Users size={14} />
-            <span className="text-xs">Active room</span>
+            <span className="text-xs">{isMember ? 'You are a member' : 'Open room'}</span>
           </div>
           <div className="flex items-center gap-1.5 text-neon-purple text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-            Join <ArrowRight size={12} />
+            {isJoining ? <Loader2 size={12} className="animate-spin" /> : null}
+            {isMember ? 'Open' : 'Join'} <ArrowRight size={12} />
           </div>
         </div>
       </div>

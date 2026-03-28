@@ -61,7 +61,14 @@ Returns `user`, `accessToken`, and `refreshToken`.
 {
   "message": "Explain WebSockets simply",
   "conversationId": "optional-conversation-id",
-  "history": []
+  "history": [],
+  "modelId": "openai/gpt-4o-mini",
+  "attachment": {
+    "fileUrl": "/api/uploads/notes.txt",
+    "fileName": "notes.txt",
+    "fileType": "text/plain",
+    "fileSize": 1024
+  }
 }
 ```
 
@@ -80,6 +87,8 @@ Example response:
       "score": 0.78
     }
   ],
+  "modelId": "openai/gpt-4o-mini",
+  "provider": "openrouter",
   "insight": {
     "title": "WebSocket discussion",
     "summary": "The user asked for a simple explanation of WebSockets.",
@@ -115,6 +124,7 @@ Returns summaries:
 ### `GET /api/conversations/:id`
 
 Returns messages plus `memoryRefs` on assistant replies when relevant.
+Conversation message payloads can also include `fileUrl`, `fileName`, `fileType`, `fileSize`, `modelId`, and `provider`.
 
 ### `GET /api/conversations/:id/insights`
 
@@ -180,7 +190,9 @@ Example response shape:
       "timestamp": "2026-03-28T10:00:00.000Z",
       "reactions": {},
       "replyTo": null,
-      "memoryRefs": []
+      "memoryRefs": [],
+      "modelId": "anthropic/claude-3.5-sonnet",
+      "provider": "openrouter"
     }
   ]
 }
@@ -231,6 +243,24 @@ Example response shape:
 
 ## AI Utility Routes
 
+### `GET /api/ai/models`
+
+Returns the visible model catalog for the current deployment:
+
+```json
+{
+  "models": [
+    {
+      "id": "openai/gpt-4o-mini",
+      "label": "GPT-4o mini",
+      "provider": "openrouter",
+      "supportsFiles": true
+    }
+  ],
+  "defaultModelId": "openai/gpt-4o-mini"
+}
+```
+
 ### `POST /api/ai/smart-replies`
 
 ```json
@@ -238,7 +268,8 @@ Example response shape:
   "messages": [
     { "username": "ravi", "content": "Can you review the API docs?" }
   ],
-  "context": "Group chat room: docs"
+  "context": "Group chat room: docs",
+  "modelId": "openai/gpt-4o-mini"
 }
 ```
 
@@ -246,7 +277,8 @@ Example response shape:
 
 ```json
 {
-  "text": "I think we're very close to shipping this."
+  "text": "I think we're very close to shipping this.",
+  "modelId": "openai/gpt-4o-mini"
 }
 ```
 
@@ -254,7 +286,8 @@ Example response shape:
 
 ```json
 {
-  "text": "Can you checks this sentence?"
+  "text": "Can you checks this sentence?",
+  "modelId": "openai/gpt-4o-mini"
 }
 ```
 
@@ -365,6 +398,8 @@ Import example:
 ## Uploads
 
 ### `POST /api/uploads`
+
+Supported upload types in this build include common images, PDF, plain text, markdown, CSV, JSON, XML, JavaScript, and TypeScript.
 
 Returns:
 

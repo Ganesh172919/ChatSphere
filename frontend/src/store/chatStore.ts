@@ -7,6 +7,12 @@ export interface Message {
   content: string;
   timestamp: string;
   memoryRefs?: MemoryReference[];
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileType?: string | null;
+  fileSize?: number | null;
+  modelId?: string | null;
+  provider?: string | null;
 }
 
 export interface Conversation {

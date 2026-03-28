@@ -12,7 +12,7 @@ import ConversationInsightsPanel from '../components/ConversationInsightsPanel';
 import { CreatePollModal, PollCard } from '../components/PollComponents';
 import MemberManagement from '../components/MemberManagement';
 import GrammarSuggestion from '../components/GrammarSuggestion';
-import { analyzeSentiment } from '../api/ai';
+import { analyzeSentiment, fetchAvailableModels, type AIModel } from '../api/ai';
 import { fetchSettings } from '../api/settings';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
@@ -28,6 +28,8 @@ interface TypingUser {
   userId: string;
   username: string;
 }
+
+const GROUP_MODEL_STORAGE_KEY = 'chatsphere.group.model';
 
 export default function GroupChat() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -50,6 +52,9 @@ export default function GroupChat() {
   const [insightLoading, setInsightLoading] = useState(false);
   const [sentimentEnabled, setSentimentEnabled] = useState(false);
   const [messageSentiments, setMessageSentiments] = useState<Record<string, { sentiment: string; emoji: string; confidence: number }>>({});
+  const [availableModels, setAvailableModels] = useState<AIModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [loadingModels, setLoadingModels] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -57,6 +62,7 @@ export default function GroupChat() {
   const canModerateMessages = currentRoom?.currentUserRole === 'creator'
     || currentRoom?.currentUserRole === 'admin'
     || currentRoom?.currentUserRole === 'moderator';
+  const activeModel = availableModels.find((model) => model.id === selectedModelId) || availableModels[0] || null;
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -83,6 +89,35 @@ export default function GroupChat() {
       setPolls([]);
     }
   }, [roomId]);
+
+  useEffect(() => {
+    const loadModels = async () => {
+      setLoadingModels(true);
+      try {
+        const result = await fetchAvailableModels();
+        setAvailableModels(result.models);
+        const stored = localStorage.getItem(GROUP_MODEL_STORAGE_KEY);
+        const nextModelId = result.models.some((model) => model.id === stored)
+          ? String(stored)
+          : result.defaultModelId || result.models[0]?.id || '';
+        setSelectedModelId(nextModelId);
+      } catch (error) {
+        console.error('Failed to load group AI models', error);
+        setAvailableModels([]);
+        setSelectedModelId('');
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+
+    void loadModels();
+  }, []);
+
+  useEffect(() => {
+    if (selectedModelId) {
+      localStorage.setItem(GROUP_MODEL_STORAGE_KEY, selectedModelId);
+    }
+  }, [selectedModelId]);
 
   // Load room data
   useEffect(() => {
@@ -143,7 +178,7 @@ export default function GroupChat() {
     const loadSentiments = async () => {
       for (const message of candidates) {
         try {
-          const sentiment = await analyzeSentiment(message.content);
+          const sentiment = await analyzeSentiment(message.content, selectedModelId || activeModel?.id);
           if (cancelled) {
             return;
           }
@@ -167,7 +202,7 @@ export default function GroupChat() {
     return () => {
       cancelled = true;
     };
-  }, [currentRoom, messageSentiments, sentimentEnabled, user?.id]);
+  }, [activeModel?.id, currentRoom, messageSentiments, selectedModelId, sentimentEnabled, user?.id]);
 
   // Join room via socket
   useEffect(() => {
@@ -323,63 +358,55 @@ export default function GroupChat() {
   const handleSend = async () => {
     if ((!input.trim() && !selectedFile) || !roomId || isSending) return;
 
-    const content = input.trim();
+    const content = input.trim() || (selectedFile ? `@ai Please review the attached file "${selectedFile.name}".` : '');
     const pendingReply = replyTo;
     const pendingFile = selectedFile;
+    const aiMentionPattern = /(^|\s)@ai\b/i;
+    const shouldTriggerAi = aiMentionPattern.test(content);
+    const aiPrompt = shouldTriggerAi ? content.replace(aiMentionPattern, ' ').trim() : '';
 
-    if (pendingFile && pendingReply) {
-      toast.error('Replying with file attachments is not supported yet');
+    if (shouldTriggerAi && !aiPrompt && !pendingFile) {
+      toast.error('Add a prompt after @ai');
       return;
     }
 
     setIsSending(true);
     try {
       await stopTyping(roomId);
+      let uploadedAttachment: Awaited<ReturnType<typeof uploadFile>> | null = null;
+      if (pendingFile) {
+        uploadedAttachment = await uploadFile(pendingFile);
+      }
 
-      if (content.toLowerCase().startsWith('@ai ') && !pendingFile) {
-        const prompt = content.slice(4).trim();
-        if (!prompt) {
-          toast.error('Add a prompt after @ai');
+      let result;
+      if (uploadedAttachment) {
+        if (pendingReply) {
+          toast.error('Replying with file attachments is not supported yet');
           return;
         }
+        result = await sendFileMessage(roomId, content, uploadedAttachment);
+      } else {
+        result = pendingReply
+          ? await replyMessage(roomId, content, pendingReply.id)
+          : await sendMessage(roomId, content);
+      }
 
-        const [messageResult, aiResult] = await Promise.all([
-          sendMessage(roomId, content),
-          triggerAi(roomId, prompt),
-        ]);
+      if (!result.success) {
+        toast.error(String(result.error || (uploadedAttachment ? 'Failed to send attachment' : 'Failed to send message')));
+        return;
+      }
 
-        if (!messageResult.success) {
-          toast.error(String(messageResult.error || 'Failed to send your message'));
-          return;
-        }
+      if (shouldTriggerAi) {
+        const aiResult = await triggerAi(
+          roomId,
+          aiPrompt || `Review the attached file "${pendingFile?.name || 'attachment'}".`,
+          selectedModelId || activeModel?.id,
+          uploadedAttachment || undefined
+        );
 
         if (!aiResult.success) {
           toast.error(String(aiResult.error || 'AI request failed'));
         }
-
-        clearComposer();
-        return;
-      }
-
-      if (pendingFile) {
-        const uploaded = await uploadFile(pendingFile);
-        const result = await sendFileMessage(roomId, content, uploaded);
-        if (!result.success) {
-          toast.error(String(result.error || 'Failed to send attachment'));
-          return;
-        }
-
-        clearComposer();
-        return;
-      }
-
-      const result = pendingReply
-        ? await replyMessage(roomId, content, pendingReply.id)
-        : await sendMessage(roomId, content);
-
-      if (!result.success) {
-        toast.error(String(result.error || 'Failed to send message'));
-        return;
       }
 
       clearComposer();
@@ -550,7 +577,7 @@ export default function GroupChat() {
           <div className="flex-1" />
           <div className="p-3 border-t border-navy-700/50">
             <p className="text-[10px] text-gray-600 text-center">
-              Type <span className="text-neon-purple font-mono">@ai</span> to summon the reasoning engine
+              Type <span className="text-neon-purple font-mono">@ai</span> to summon {activeModel?.label || 'the room AI'}
             </p>
           </div>
         </div>
@@ -644,6 +671,8 @@ export default function GroupChat() {
                   index={i}
                   memoryRefs={msg.memoryRefs}
                   sentiment={messageSentiments[msg.id] || null}
+                  modelId={msg.modelId}
+                  provider={msg.provider}
                 />
               ))}
               <AnimatePresence>
@@ -729,12 +758,29 @@ export default function GroupChat() {
                   </button>
                 </div>
               )}
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-[11px] text-gray-500">
+                <div className="truncate">
+                  {activeModel ? `Room AI: ${activeModel.label} via ${activeModel.provider}` : 'Loading room AI models...'}
+                </div>
+                <select
+                  value={selectedModelId}
+                  onChange={(event) => setSelectedModelId(event.target.value)}
+                  disabled={loadingModels || availableModels.length === 0}
+                  className="rounded-lg border border-navy-700/50 bg-navy-800 px-2.5 py-1 text-[11px] text-gray-300 focus:outline-none"
+                >
+                  {availableModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label} ({model.provider})
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="flex items-end gap-3 bg-navy-800 rounded-2xl border border-navy-700/50 p-3 focus-within:border-neon-purple/30 transition-colors">
                 <input
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileChange}
-                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain"
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,application/xml,text/javascript,application/javascript,text/x-typescript,application/x-typescript"
                   className="hidden"
                 />
                 <button

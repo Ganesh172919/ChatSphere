@@ -19,6 +19,30 @@ const conversationMessageSchema = new mongoose.Schema({
     summary: { type: String, required: true },
     score: { type: Number, default: null },
   }],
+  fileUrl: {
+    type: String,
+    default: null,
+  },
+  fileName: {
+    type: String,
+    default: null,
+  },
+  fileType: {
+    type: String,
+    default: null,
+  },
+  fileSize: {
+    type: Number,
+    default: null,
+  },
+  modelId: {
+    type: String,
+    default: null,
+  },
+  provider: {
+    type: String,
+    default: null,
+  },
 }, { _id: false });
 
 const conversationSchema = new mongoose.Schema({

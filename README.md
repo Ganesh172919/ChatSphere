@@ -1,14 +1,16 @@
 # ChatSphere
 
-ChatSphere is a full-stack AI-native chat platform built with React, TypeScript, Vite, Express, MongoDB, Socket.IO, JWT auth, Google OAuth, and Gemini `gemini-2.0-flash`.
+ChatSphere is a full-stack AI-native chat platform built with React, TypeScript, Vite, Express, MongoDB, Socket.IO, JWT auth, Google OAuth, and a multi-provider AI gateway.
 
 ## Core Features
 
 - Solo AI chat with saved conversations and server-backed sync
-- Group rooms with real-time messaging, replies, reactions, pins, polls, presence, typing, and file sharing
+- Group rooms with real-time messaging, replies, reactions, pins, polls, presence, typing, file sharing, and `@ai` room assistance
 - AI Memory Graph with editable user memory
 - Conversation Intelligence for solo chats and rooms
 - Cross-model import and export for external AI histories
+- OpenRouter-first multi-model routing with optional Gemini, Grok, and Hugging Face fallbacks
+- Model selection in solo chat and group AI prompts, including file-assisted prompts
 - Admin analytics, moderation, blocking, and prompt management
 
 ## Stack
@@ -16,7 +18,7 @@ ChatSphere is a full-stack AI-native chat platform built with React, TypeScript,
 - Frontend: React 18, TypeScript, Vite, Zustand, Framer Motion
 - Backend: Express, Mongoose, Socket.IO
 - Database: MongoDB
-- AI: Gemini `gemini-2.0-flash`
+- AI: OpenRouter-first routing plus optional direct Gemini, Grok, and Hugging Face providers
 - Auth: JWT access/refresh tokens plus Google OAuth
 
 ## Local Setup
@@ -43,10 +45,13 @@ Minimum backend env:
 MONGO_URI=mongodb://localhost:27017/chatsphere
 JWT_ACCESS_SECRET=replace_me
 JWT_REFRESH_SECRET=replace_me
-GEMINI_API_KEY=replace_me
+OPENROUTER_API_KEY=replace_me
+OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini
 CLIENT_URL=http://localhost:5173
 PORT=3000
 ```
+
+Optional direct-provider fallbacks are documented in [backend/.env.example](backend/.env.example).
 
 Start backend:
 
@@ -84,6 +89,9 @@ node --check backend/routes/ai.js
 - Memory Center at `/memory`
 - Data Portability Center at `/export`
 - Solo conversation sync with server data
+- OpenRouter-first model routing with visible model pickers in chat inputs
+- File-aware solo AI prompts and stronger `@ai` handling in rooms
+- Improved room join flow for existing rooms
 - Room insight summaries and action extraction
 - Prompt template storage and admin prompt APIs
 - Admin-protected analytics routes
