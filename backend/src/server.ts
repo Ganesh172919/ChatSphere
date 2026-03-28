@@ -3,6 +3,8 @@ import dotenv from "dotenv";
 import cors from "cors";
 import { PrismaClient } from "@prisma/client";
 import authRoutes from "./routes/auth.routes";
+import groupRoutes from "./routes/group.routes";
+import messageRoutes from "./routes/message.routes";
 
 dotenv.config();
 
@@ -16,6 +18,8 @@ app.use(express.json());
 
 // routes
 app.use("/api/auth", authRoutes);
+app.use("/api/groups", groupRoutes);
+app.use("/api/chats", messageRoutes);
 
 app.get("/", (req, res) => {
     res.send("API Running");
