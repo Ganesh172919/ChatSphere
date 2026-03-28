@@ -96,7 +96,7 @@ export default function SoloChat() {
             )}
             <div className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-navy-800 border border-navy-700/50">
               <Sparkles size={12} className="text-neon-purple" />
-              <span className="text-[10px] text-gray-500 font-medium">gemini-2.5-pro</span>
+              <span className="text-[10px] text-gray-500 font-medium">gemini-2.0-flash</span>
             </div>
           </div>
 

@@ -1,105 +1,127 @@
 # Setup Guide
 
-Follow these steps to get ChatSphere running on your local machine.
+This guide matches the current codebase. ChatSphere runs locally with:
+
+- Frontend: React + TypeScript + Vite
+- Backend: Express + Socket.IO + MongoDB + Mongoose
+- No Docker
+- No Prisma runtime
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
--   **Node.js**: Version 18.x or higher
--   **npm** or **yarn** (Node Package Manager)
--   **Git**
+- Node.js 18 or newer
+- npm
+- MongoDB running locally or a MongoDB Atlas connection string
+- A Gemini API key
 
-You will also need administrative access or accounts for the following services:
--   **MongoDB**: A local MongoDB server or a cloud cluster on [MongoDB Atlas](https://cloud.mongodb.com).
--   **Google AI Studio**: For obtaining the Gemini API key.
--   **Google Cloud Console**: For configuring OAuth 2.0 credentials.
+Optional:
 
----
+- Google OAuth credentials
+- SMTP credentials for real emails
 
-## 1. Clone the Repository
+## Backend Setup
 
 ```bash
-git clone <repository-url>
-cd ChatSphere
+cd backend
+npm install
+copy .env.example .env
 ```
 
----
+Fill `backend/.env`:
 
-## 2. Backend Setup
+```env
+MONGO_URI=mongodb://localhost:27017/chatsphere
+JWT_ACCESS_SECRET=replace_with_a_long_random_string
+JWT_REFRESH_SECRET=replace_with_a_different_long_random_string
+GEMINI_API_KEY=your_gemini_api_key
+CLIENT_URL=http://localhost:5173
+PORT=3000
 
-1.  **Navigate to the backend directory and install dependencies**:
-    ```bash
-    cd backend
-    npm install
-    ```
+# Optional Google OAuth
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
 
-2.  **Environment Variables**:
-    Create a `.env` file in the root of the `backend` directory. Populate it with the following keys:
-    ```env
-    PORT=3000
-    MONGO_URI=mongodb+srv://<username>:<password>@cluster0.example.mongodb.net/chatsphere?retryWrites=true&w=majority
-    GEMINI_API_KEY=your_google_gemini_api_key
-    JWT_ACCESS_SECRET=your_super_secret_access_key
-    JWT_REFRESH_SECRET=your_super_secret_refresh_key
-    GOOGLE_CLIENT_ID=your_google_oauth_client_id.apps.googleusercontent.com
-    GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
-    GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
-    CLIENT_URL=http://localhost:5173
-    ```
+# Optional SMTP email
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM="ChatSphere" <noreply@chatsphere.app>
 
-    *   **MONGO_URI**: Replace with your local `mongodb://localhost:27017/chatsphere` or Atlas connection string.
-    *   **JWT Secrets**: Generate secure random strings for these values.
-    *   **Google Credentials**: See the "Google OAuth Setup" section below.
+# Optional room edit window
+MESSAGE_EDIT_WINDOW_MINUTES=15
+```
 
-3.  **Start the Backend Server**:
-    ```bash
-    # For development (with nodemon, if installed)
-    npm run dev 
-    
-    # Or standard start
-    node index.js
-    ```
-    You should see terminal outputs indicating MongoDB connection success and the server running on port 3000.
+Start the backend:
 
----
+```bash
+npm run dev
+```
 
-## 3. Frontend Setup
+Expected local behavior:
 
-1.  **Navigate to the frontend directory and install dependencies**:
-    Open a *new* terminal window/tab:
-    ```bash
-    cd frontend
-    npm install
-    ```
+- The backend connects to MongoDB.
+- File uploads are stored in `backend/uploads`.
+- If SMTP is missing, password reset links are printed to the backend console.
+- If Google OAuth is missing, the app still runs; Google sign-in just shows a friendly local-setup error.
 
-2.  **Environment Variables (Optional)**:
-    If your backend is running on a port other than 3000, you may need to configure Vite. Typically, Vite leverages proxying or you can set a `.env` in the `frontend` directory:
-    ```env
-    VITE_API_URL=http://localhost:3000
-    ```
-    *(Check frontend `vite.config.ts` or API service logic to confirm if this is required; usually setup defaults assume backend is on :3000)*
+## Frontend Setup
 
-3.  **Start the Development Server**:
-    ```bash
-    npm run dev
-    ```
-    The frontend should now be running, typically accessible at `http://localhost:5173`.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
----
+Open [http://localhost:5173](http://localhost:5173).
 
-## Google OAuth Setup Guide
+## Recommended First Checks
 
-To enable Google Sign-In:
+1. Open [http://localhost:3000/api/health](http://localhost:3000/api/health).
+2. Register a local account.
+3. Create or join a room.
+4. Send a text message.
+5. Upload an image or file in a room.
+6. Try edit, delete, pin, and reaction actions on a room message.
+7. Open the search page and verify both room-message and solo-conversation search.
 
-1.  Go to the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
-2.  Create a new Project (or select an existing one).
-3.  Navigate to **APIs & Services > Credentials**.
-4.  Click **Create Credentials** -> **OAuth client ID**.
-5.  If prompted, configure your "OAuth consent screen" (App name: ChatSphere, add your email, save).
-6.  For Application Type, select **Web application**.
-7.  Under **Authorized JavaScript origins**, add:
-    -   `http://localhost:5173` (Your frontend URL)
-8.  Under **Authorized redirect URIs**, add:
-    -   `http://localhost:3000/api/auth/google/callback` (Must match your `.env`)
-9.  Click **Create**.
-10. Copy the generated **Client ID** and **Client Secret** into your backend `.env` file.
+## Google OAuth Setup
+
+Only do this if you want Google sign-in locally.
+
+1. Create an OAuth client in Google Cloud Console.
+2. Add `http://localhost:5173` to Authorized JavaScript origins.
+3. Add `http://localhost:3000/api/auth/google/callback` to Authorized redirect URIs.
+4. Copy the client ID and secret into `backend/.env`.
+
+The current flow is:
+
+1. Frontend sends the user to `/api/auth/google`
+2. Google returns to `/api/auth/google/callback`
+3. Backend creates a short-lived one-time code
+4. Frontend exchanges that code for JWT tokens through `/api/auth/google/exchange`
+
+## Email Notes
+
+- `POST /api/auth/forgot-password` works without SMTP.
+- Without SMTP, the backend prints the reset link in the console.
+- With SMTP configured, users receive the real reset email.
+
+## Build Verification
+
+Frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+Backend syntax:
+
+```powershell
+cd backend
+Get-ChildItem -Path . -Recurse -Filter *.js -File |
+  Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
+  ForEach-Object { node --check $_.FullName }
+```

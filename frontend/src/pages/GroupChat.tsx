@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Hash, X, Pin, BarChart3, Shield } from 'lucide-react';
+import { Send, ArrowLeft, Hash, X, Pin, BarChart3, Shield, Paperclip, Loader2 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import MessageBubble from '../components/MessageBubble';
 import TypingIndicator from '../components/TypingIndicator';
@@ -14,7 +14,7 @@ import GrammarSuggestion from '../components/GrammarSuggestion';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
 import { useAuthStore } from '../store/authStore';
-import { fetchRoomById } from '../api/rooms';
+import { fetchRoomById, joinRoomById, uploadFile } from '../api/rooms';
 import type { GroupMessage } from '../api/rooms';
 import toast from 'react-hot-toast';
 
@@ -27,8 +27,8 @@ export default function GroupChat() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { socket, joinRoom, leaveRoom, sendMessage, replyMessage, addReaction, triggerAi, emitTyping, stopTyping, pinMessage, unpinMessage } = useSocket();
-  const { currentRoom, setCurrentRoom, addMessageToCurrentRoom, updateMessageReactions, onlineUsers, setOnlineUsers, aiThinking, setAiThinking, clearCurrentRoom } = useRoomStore();
+  const { socket, joinRoom, leaveRoom, sendMessage, sendFileMessage, replyMessage, addReaction, triggerAi, editMessage, deleteMessage, emitTyping, stopTyping, pinMessage, unpinMessage } = useSocket();
+  const { currentRoom, setCurrentRoom, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, onlineUsers, setOnlineUsers, aiThinking, setAiThinking, clearCurrentRoom } = useRoomStore();
 
   const [input, setInput] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; username: string; content: string } | null>(null);
@@ -37,8 +37,15 @@ export default function GroupChat() {
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const [showPollModal, setShowPollModal] = useState(false);
   const [showMemberPanel, setShowMemberPanel] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const canModerateMessages = currentRoom?.currentUserRole === 'creator'
+    || currentRoom?.currentUserRole === 'admin'
+    || currentRoom?.currentUserRole === 'moderator';
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -50,10 +57,12 @@ export default function GroupChat() {
 
     const loadRoom = async () => {
       try {
+        await joinRoomById(roomId);
         const room = await fetchRoomById(roomId);
         setCurrentRoom(room);
-      } catch {
-        toast.error('Room not found');
+      } catch (err: unknown) {
+        const error = err as { response?: { data?: { error?: string } } };
+        toast.error(error.response?.data?.error || 'Unable to open this room');
         navigate('/rooms');
       }
     };
@@ -68,10 +77,14 @@ export default function GroupChat() {
   useEffect(() => {
     if (!roomId || !socket) return;
 
-    joinRoom(roomId);
+    void joinRoom(roomId).then((response) => {
+      if (!response.success) {
+        toast.error(response.error || 'Failed to connect to the room');
+      }
+    });
 
     return () => {
-      leaveRoom(roomId);
+      void leaveRoom(roomId);
     };
   }, [roomId, socket, joinRoom, leaveRoom]);
 
@@ -93,6 +106,18 @@ export default function GroupChat() {
 
     const handleReactionUpdate = ({ messageId, reactions }: { messageId: string; reactions: Record<string, string[]> }) => {
       updateMessageReactions(messageId, reactions);
+    };
+
+    const handleMessageEdited = ({ messageId, content, editedAt }: { messageId: string; content: string; editedAt: string }) => {
+      editMessageInCurrentRoom(messageId, content, editedAt);
+    };
+
+    const handleMessageDeleted = ({ messageId }: { messageId: string }) => {
+      deleteMessageInCurrentRoom(messageId);
+    };
+
+    const handleMessageStatusUpdate = ({ messageId, status }: { messageId: string; status: 'sent' | 'delivered' | 'read' }) => {
+      updateMessageStatusInCurrentRoom(messageId, status);
     };
 
     const handleRoomUsers = (users: Array<{ id: string; username: string }>) => {
@@ -121,18 +146,22 @@ export default function GroupChat() {
     };
 
     // Pinned messages
-    const handleMessagePinned = ({ pinnedBy }: { messageId: string; pinnedBy: string }) => {
+    const handleMessagePinned = ({ messageId, pinnedBy }: { messageId: string; pinnedBy: string }) => {
+      setMessagePinnedState(messageId, true);
       toast.success(`${pinnedBy} pinned a message`, { duration: 2000, icon: '📌' });
     };
 
-    const handleMessageUnpinned = () => {
-      // Refresh is handled automatically
+    const handleMessageUnpinned = ({ messageId }: { messageId: string }) => {
+      setMessagePinnedState(messageId, false);
     };
 
     socket.on('receive_message', handleMessage);
     socket.on('ai_response', handleAiResponse);
     socket.on('ai_thinking', handleAiThinking);
     socket.on('reaction_update', handleReactionUpdate);
+    socket.on('message_edited', handleMessageEdited);
+    socket.on('message_deleted', handleMessageDeleted);
+    socket.on('message_status_update', handleMessageStatusUpdate);
     socket.on('room_users', handleRoomUsers);
     socket.on('user_joined', handleUserJoined);
     socket.on('user_left', handleUserLeft);
@@ -146,6 +175,9 @@ export default function GroupChat() {
       socket.off('ai_response', handleAiResponse);
       socket.off('ai_thinking', handleAiThinking);
       socket.off('reaction_update', handleReactionUpdate);
+      socket.off('message_edited', handleMessageEdited);
+      socket.off('message_deleted', handleMessageDeleted);
+      socket.off('message_status_update', handleMessageStatusUpdate);
       socket.off('room_users', handleRoomUsers);
       socket.off('user_joined', handleUserJoined);
       socket.off('user_left', handleUserLeft);
@@ -154,7 +186,7 @@ export default function GroupChat() {
       socket.off('message_pinned', handleMessagePinned);
       socket.off('message_unpinned', handleMessageUnpinned);
     };
-  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, setOnlineUsers, setAiThinking]);
+  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, setOnlineUsers, setAiThinking]);
 
   // Auto-scroll
   useEffect(() => {
@@ -176,28 +208,88 @@ export default function GroupChat() {
     }
   };
 
-  const handleSend = () => {
-    if (!input.trim() || !roomId) return;
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    setSelectedFile(file);
+  };
 
-    const content = input.trim();
+  const clearComposer = () => {
     setInput('');
     setReplyTo(null);
-    stopTyping(roomId);
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
-    // Check for @ai trigger
-    if (content.toLowerCase().startsWith('@ai ')) {
-      const prompt = content.slice(4).trim();
-      if (prompt) {
-        triggerAi(roomId, prompt);
-        sendMessage(roomId, content);
-        return;
-      }
+  const handleSend = async () => {
+    if ((!input.trim() && !selectedFile) || !roomId || isSending) return;
+
+    const content = input.trim();
+    const pendingReply = replyTo;
+    const pendingFile = selectedFile;
+
+    if (pendingFile && pendingReply) {
+      toast.error('Replying with file attachments is not supported yet');
+      return;
     }
 
-    if (replyTo) {
-      replyMessage(roomId, content, replyTo.id);
-    } else {
-      sendMessage(roomId, content);
+    setIsSending(true);
+    try {
+      await stopTyping(roomId);
+
+      if (content.toLowerCase().startsWith('@ai ') && !pendingFile) {
+        const prompt = content.slice(4).trim();
+        if (!prompt) {
+          toast.error('Add a prompt after @ai');
+          return;
+        }
+
+        const [messageResult, aiResult] = await Promise.all([
+          sendMessage(roomId, content),
+          triggerAi(roomId, prompt),
+        ]);
+
+        if (!messageResult.success) {
+          toast.error(String(messageResult.error || 'Failed to send your message'));
+          return;
+        }
+
+        if (!aiResult.success) {
+          toast.error(String(aiResult.error || 'AI request failed'));
+        }
+
+        clearComposer();
+        return;
+      }
+
+      if (pendingFile) {
+        const uploaded = await uploadFile(pendingFile);
+        const result = await sendFileMessage(roomId, content, uploaded);
+        if (!result.success) {
+          toast.error(String(result.error || 'Failed to send attachment'));
+          return;
+        }
+
+        clearComposer();
+        return;
+      }
+
+      const result = pendingReply
+        ? await replyMessage(roomId, content, pendingReply.id)
+        : await sendMessage(roomId, content);
+
+      if (!result.success) {
+        toast.error(String(result.error || 'Failed to send message'));
+        return;
+      }
+
+      clearComposer();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } } };
+      toast.error(error.response?.data?.error || 'Failed to send message');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -208,13 +300,35 @@ export default function GroupChat() {
     }
   };
 
-  const handlePinToggle = (messageId: string) => {
+  const handlePinToggle = async (messageId: string) => {
     if (!roomId) return;
     const msg = currentRoom?.messages.find((m) => m.id === messageId);
     if (msg && (msg as GroupMessage & { isPinned?: boolean }).isPinned) {
-      unpinMessage(roomId, messageId);
+      const result = await unpinMessage(roomId, messageId);
+      if (!result.success) {
+        toast.error(String(result.error || 'Failed to unpin message'));
+      }
     } else {
-      pinMessage(roomId, messageId);
+      const result = await pinMessage(roomId, messageId);
+      if (!result.success) {
+        toast.error(String(result.error || 'Failed to pin message'));
+      }
+    }
+  };
+
+  const handleEditMessage = async (messageId: string, nextContent: string) => {
+    if (!roomId) return;
+    const result = await editMessage(roomId, messageId, nextContent);
+    if (!result.success) {
+      toast.error(String(result.error || 'Failed to edit message'));
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!roomId) return;
+    const result = await deleteMessage(roomId, messageId);
+    if (!result.success) {
+      toast.error(String(result.error || 'Failed to delete message'));
     }
   };
 
@@ -355,9 +469,25 @@ export default function GroupChat() {
                   showReactions
                   status={(msg as GroupMessage & { status?: 'sent' | 'delivered' | 'read' }).status}
                   isPinned={(msg as GroupMessage & { isPinned?: boolean }).isPinned}
+                  isEdited={msg.isEdited}
+                  fileUrl={msg.fileUrl}
+                  fileName={msg.fileName}
+                  fileType={msg.fileType}
+                  fileSize={msg.fileSize}
                   onReply={() => setReplyTo({ id: msg.id, username: msg.username, content: msg.content })}
-                  onReaction={(emoji) => roomId && addReaction(roomId, msg.id, emoji)}
+                  onReaction={(emoji) => {
+                    if (!roomId) return;
+                    void addReaction(roomId, msg.id, emoji).then((result) => {
+                      if (!result.success) {
+                        toast.error(String(result.error || 'Failed to update reaction'));
+                      }
+                    });
+                  }}
                   onPin={handlePinToggle}
+                  onEdit={(nextContent) => void handleEditMessage(msg.id, nextContent)}
+                  onDelete={() => void handleDeleteMessage(msg.id)}
+                  canEdit={msg.userId === user?.id && !msg.isDeleted}
+                  canDelete={(msg.userId === user?.id || canModerateMessages) && !msg.isDeleted}
                   index={i}
                 />
               ))}
@@ -427,24 +557,55 @@ export default function GroupChat() {
                 onAccept={(corrected) => setInput(corrected)}
                 enabled={true}
               />
+              {selectedFile && (
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-navy-700/50 bg-navy-800/60 px-3 py-2 text-xs text-gray-300">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{selectedFile.name}</p>
+                    <p className="text-gray-500">
+                      {selectedFile.type || 'Unknown type'} · {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setSelectedFile(null)}
+                    className="p-1 text-gray-500 hover:text-white transition-colors"
+                    aria-label="Remove attachment"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               <div className="flex items-end gap-3 bg-navy-800 rounded-2xl border border-navy-700/50 p-3 focus-within:border-neon-purple/30 transition-colors">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileChange}
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain"
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-navy-700 transition-all flex-shrink-0"
+                  aria-label="Attach file"
+                >
+                  <Paperclip size={16} />
+                </button>
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  placeholder="Message #room or @ai for AI response..."
+                  placeholder="Message #room, attach a file, or type @ai for AI..."
                   rows={1}
                   className="flex-1 bg-transparent text-white placeholder-gray-600 resize-none text-sm focus:outline-none max-h-32"
                   aria-label="Message input"
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim()}
+                  disabled={(!input.trim() && !selectedFile) || isSending}
                   className="p-2.5 rounded-xl bg-gradient-to-r from-neon-purple to-neon-blue text-white hover:shadow-lg hover:shadow-purple-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 flex-shrink-0"
                   aria-label="Send message"
                 >
-                  <Send size={16} />
+                  {isSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                 </button>
               </div>
             </div>

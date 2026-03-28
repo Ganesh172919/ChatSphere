@@ -2,6 +2,7 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Report = require('../models/Report');
 const User = require('../models/User');
+const Message = require('../models/Message');
 const { isValidObjectId } = require('../helpers/validate');
 
 const router = express.Router();
@@ -31,6 +32,24 @@ router.post('/report', authMiddleware, async (req, res) => {
     // Prevent self-reporting
     if (targetType === 'user' && targetId === req.user.id) {
       return res.status(400).json({ error: 'Cannot report yourself' });
+    }
+
+    if (targetType === 'user') {
+      const targetUser = await User.findById(targetId).select('_id').lean();
+      if (!targetUser) {
+        return res.status(404).json({ error: 'Reported user not found' });
+      }
+    }
+
+    if (targetType === 'message') {
+      const targetMessage = await Message.findById(targetId).select('_id roomId').lean();
+      if (!targetMessage) {
+        return res.status(404).json({ error: 'Reported message not found' });
+      }
+
+      if (roomId && targetMessage.roomId && targetMessage.roomId.toString() !== roomId) {
+        return res.status(400).json({ error: 'Message does not belong to the selected room' });
+      }
     }
 
     // Check for duplicate pending reports from this user
@@ -79,9 +98,17 @@ router.post('/block', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Cannot block yourself' });
     }
 
-    const user = await User.findById(req.user.id);
+    const [user, targetUser] = await Promise.all([
+      User.findById(req.user.id),
+      User.findById(userId).select('_id').lean(),
+    ]);
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Target user not found' });
     }
 
     if (!user.blockedUsers) {

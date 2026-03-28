@@ -12,6 +12,8 @@ interface RoomState {
   updateMessageReactions: (messageId: string, reactions: Record<string, string[]>) => void;
   editMessageInCurrentRoom: (messageId: string, content: string, editedAt: string) => void;
   deleteMessageInCurrentRoom: (messageId: string) => void;
+  updateMessageStatusInCurrentRoom: (messageId: string, status: 'sent' | 'delivered' | 'read') => void;
+  setMessagePinnedState: (messageId: string, isPinned: boolean) => void;
   setOnlineUsers: (users: Array<{ id: string; username: string }>) => void;
   setAiThinking: (status: boolean) => void;
   clearCurrentRoom: () => void;
@@ -66,6 +68,30 @@ export const useRoomStore = create<RoomState>()((set) => ({
           ...state.currentRoom,
           messages: state.currentRoom.messages.map((m) =>
             m.id === messageId ? { ...m, content: '🗑️ This message was deleted', isDeleted: true } : m
+          ),
+        },
+      };
+    }),
+  updateMessageStatusInCurrentRoom: (messageId, status) =>
+    set((state) => {
+      if (!state.currentRoom) return state;
+      return {
+        currentRoom: {
+          ...state.currentRoom,
+          messages: state.currentRoom.messages.map((m) =>
+            m.id === messageId ? { ...m, status } : m
+          ),
+        },
+      };
+    }),
+  setMessagePinnedState: (messageId, isPinned) =>
+    set((state) => {
+      if (!state.currentRoom) return state;
+      return {
+        currentRoom: {
+          ...state.currentRoom,
+          messages: state.currentRoom.messages.map((m) =>
+            m.id === messageId ? { ...m, isPinned } : m
           ),
         },
       };

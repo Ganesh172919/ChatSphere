@@ -2,11 +2,55 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Room = require('../models/Room');
 const Message = require('../models/Message');
-const { isValidObjectId, findRoomMember } = require('../helpers/validate');
+const {
+  isValidObjectId,
+  findRoomMember,
+  getRoomMemberRole,
+  hasRoomRole,
+} = require('../helpers/validate');
 
 const router = express.Router();
 
-// GET /api/rooms — List all rooms (with member counts, no N+1)
+function formatRoomSummary(room, currentUserId, messageCount = 0) {
+  return {
+    id: room._id.toString(),
+    name: room.name,
+    description: room.description,
+    tags: room.tags || [],
+    maxUsers: room.maxUsers,
+    memberCount: room.members ? room.members.length : 0,
+    creatorId: room.creatorId.toString(),
+    createdAt: room.createdAt,
+    messageCount,
+    isMember: Boolean(findRoomMember(room, currentUserId)),
+    currentUserRole: getRoomMemberRole(room, currentUserId),
+  };
+}
+
+function formatMessage(message) {
+  return {
+    id: message._id.toString(),
+    userId: message.userId,
+    username: message.username,
+    content: message.isDeleted ? 'This message was deleted' : message.content,
+    timestamp: message.createdAt,
+    isAI: message.isAI || false,
+    triggeredBy: message.triggeredBy || null,
+    replyTo: message.replyTo && message.replyTo.id ? message.replyTo : null,
+    reactions: message.reactions ? (message.reactions instanceof Map ? Object.fromEntries(message.reactions) : message.reactions) : {},
+    status: message.status || 'sent',
+    isPinned: message.isPinned || false,
+    isEdited: message.isEdited || false,
+    editedAt: message.editedAt || null,
+    isDeleted: message.isDeleted || false,
+    fileUrl: message.fileUrl || null,
+    fileName: message.fileName || null,
+    fileType: message.fileType || null,
+    fileSize: message.fileSize || null,
+  };
+}
+
+// GET /api/rooms
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const rooms = await Room.find()
@@ -14,35 +58,21 @@ router.get('/', authMiddleware, async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // Batch-get message counts using aggregation (avoid N+1)
-    const roomIds = rooms.map(r => r._id);
+    const roomIds = rooms.map((room) => room._id);
     const messageCounts = await Message.aggregate([
       { $match: { roomId: { $in: roomIds } } },
       { $group: { _id: '$roomId', count: { $sum: 1 } } },
     ]);
-    const countMap = {};
-    messageCounts.forEach(mc => { countMap[mc._id.toString()] = mc.count; });
 
-    const roomsWithCounts = rooms.map(room => ({
-      id: room._id.toString(),
-      name: room.name,
-      description: room.description,
-      tags: room.tags,
-      maxUsers: room.maxUsers,
-      memberCount: room.members ? room.members.length : 0,
-      creatorId: room.creatorId.toString(),
-      createdAt: room.createdAt,
-      messageCount: countMap[room._id.toString()] || 0,
-    }));
-
-    res.json(roomsWithCounts);
+    const countMap = new Map(messageCounts.map((entry) => [entry._id.toString(), entry.count]));
+    res.json(rooms.map((room) => formatRoomSummary(room, req.user.id, countMap.get(room._id.toString()) || 0)));
   } catch (err) {
     console.error('List rooms error:', err);
     res.status(500).json({ error: 'Failed to load rooms' });
   }
 });
 
-// POST /api/rooms — Create room
+// POST /api/rooms
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { name, description, tags, maxUsers } = req.body;
@@ -51,42 +81,98 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Room name is required' });
     }
 
-    if (name.length > 50) {
+    if (name.trim().length > 50) {
       return res.status(400).json({ error: 'Room name must be under 50 characters' });
     }
 
-    const parsedMax = Math.min(Math.max(parseInt(maxUsers) || 20, 2), 100);
+    const parsedMaxUsers = Math.min(Math.max(parseInt(maxUsers, 10) || 20, 2), 100);
+    const parsedTags = Array.isArray(tags)
+      ? [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean).slice(0, 8))]
+      : [];
 
     const room = new Room({
       name: name.trim(),
-      description: (description || '').trim(),
-      tags: Array.isArray(tags) ? tags.map(t => t.trim().toLowerCase()).filter(Boolean) : [],
-      maxUsers: parsedMax,
+      description: typeof description === 'string' ? description.trim().slice(0, 500) : '',
+      tags: parsedTags,
+      maxUsers: parsedMaxUsers,
       creatorId: req.user.id,
-      // Creator is auto-added as admin
       members: [{ userId: req.user.id, role: 'admin', joinedAt: new Date() }],
     });
 
     await room.save();
-
-    res.status(201).json({
-      id: room._id.toString(),
-      name: room.name,
-      description: room.description,
-      tags: room.tags,
-      maxUsers: room.maxUsers,
-      memberCount: 1,
-      creatorId: room.creatorId.toString(),
-      createdAt: room.createdAt,
-      messageCount: 0,
-    });
+    res.status(201).json(formatRoomSummary(room.toObject(), req.user.id, 0));
   } catch (err) {
     console.error('Create room error:', err);
     res.status(500).json({ error: 'Failed to create room' });
   }
 });
 
-// GET /api/rooms/:id — Get room + recent messages
+// POST /api/rooms/:id/join
+router.post('/:id/join', authMiddleware, async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.id);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    const existingMember = findRoomMember(room, req.user.id);
+    if (!existingMember) {
+      if (room.members.length >= room.maxUsers) {
+        return res.status(409).json({ error: 'This room is already full' });
+      }
+
+      room.members.push({
+        userId: req.user.id,
+        role: 'member',
+        joinedAt: new Date(),
+      });
+      await room.save();
+    }
+
+    const messageCount = await Message.countDocuments({ roomId: room._id });
+    res.json(formatRoomSummary(room.toObject(), req.user.id, messageCount));
+  } catch (err) {
+    console.error('Join room error:', err);
+    res.status(500).json({ error: 'Failed to join room' });
+  }
+});
+
+// POST /api/rooms/:id/leave
+router.post('/:id/leave', authMiddleware, async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.id);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    if (room.creatorId.toString() === req.user.id) {
+      return res.status(400).json({ error: 'The room creator cannot leave their own room' });
+    }
+
+    const member = findRoomMember(room, req.user.id);
+    if (!member) {
+      return res.status(404).json({ error: 'You are not a member of this room' });
+    }
+
+    room.members = room.members.filter((entry) => entry.userId.toString() !== req.user.id);
+    await room.save();
+
+    res.json({ message: 'You left the room successfully' });
+  } catch (err) {
+    console.error('Leave room error:', err);
+    res.status(500).json({ error: 'Failed to leave room' });
+  }
+});
+
+// GET /api/rooms/:id
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
@@ -98,43 +184,18 @@ router.get('/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Room not found' });
     }
 
+    if (!findRoomMember(room, req.user.id)) {
+      return res.status(403).json({ error: 'Join the room before viewing its messages' });
+    }
+
     const messages = await Message.find({ roomId: room._id })
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
 
-    // Reverse to chronological order
-    const formattedMessages = messages.reverse().map(m => ({
-      id: m._id.toString(),
-      userId: m.userId,
-      username: m.username,
-      content: m.isDeleted ? '🗑️ This message was deleted' : m.content,
-      timestamp: m.createdAt,
-      isAI: m.isAI,
-      triggeredBy: m.triggeredBy,
-      replyTo: m.replyTo && m.replyTo.id ? m.replyTo : null,
-      reactions: m.reactions ? (m.reactions instanceof Map ? Object.fromEntries(m.reactions) : m.reactions) : {},
-      status: m.status || 'sent',
-      isPinned: m.isPinned || false,
-      isEdited: m.isEdited || false,
-      editedAt: m.editedAt || null,
-      isDeleted: m.isDeleted || false,
-      fileUrl: m.fileUrl || null,
-      fileName: m.fileName || null,
-      fileType: m.fileType || null,
-      fileSize: m.fileSize || null,
-    }));
-
     res.json({
-      id: room._id.toString(),
-      name: room.name,
-      description: room.description,
-      tags: room.tags,
-      maxUsers: room.maxUsers,
-      memberCount: room.members ? room.members.length : 0,
-      creatorId: room.creatorId.toString(),
-      createdAt: room.createdAt,
-      messages: formattedMessages,
+      ...formatRoomSummary(room, req.user.id, messages.length),
+      messages: messages.reverse().map(formatMessage),
     });
   } catch (err) {
     console.error('Get room error:', err);
@@ -142,7 +203,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/rooms/:id — Delete room (creator only)
+// DELETE /api/rooms/:id
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
@@ -170,7 +231,7 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/rooms/:id/pin/:messageId — Pin a message
+// POST /api/rooms/:id/pin/:messageId
 router.post('/:id/pin/:messageId', authMiddleware, async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id) || !isValidObjectId(req.params.messageId)) {
@@ -182,26 +243,25 @@ router.post('/:id/pin/:messageId', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Room not found' });
     }
 
-    // Check membership
-    if (!findRoomMember(room, req.user.id)) {
-      return res.status(403).json({ error: 'Must be a room member to pin messages' });
+    if (!hasRoomRole(room, req.user.id, ['admin', 'moderator'])) {
+      return res.status(403).json({ error: 'Only room moderators can pin messages' });
     }
 
     const message = await Message.findById(req.params.messageId);
-    if (!message) {
-      return res.status(404).json({ error: 'Message not found' });
+    if (!message || message.roomId.toString() !== room._id.toString()) {
+      return res.status(404).json({ error: 'Message not found in this room' });
     }
 
-    if (message.roomId.toString() !== room._id.toString()) {
-      return res.status(400).json({ error: 'Message does not belong to this room' });
+    if (message.isDeleted) {
+      return res.status(400).json({ error: 'Deleted messages cannot be pinned' });
     }
 
     message.isPinned = true;
-    message.pinnedBy = req.user.username || req.user.id;
+    message.pinnedBy = req.user.username;
     message.pinnedAt = new Date();
     await message.save();
 
-    if (!room.pinnedMessages.includes(message._id)) {
+    if (!room.pinnedMessages.some((id) => id.toString() === message._id.toString())) {
       room.pinnedMessages.push(message._id);
       await room.save();
     }
@@ -213,7 +273,7 @@ router.post('/:id/pin/:messageId', authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/rooms/:id/pin/:messageId — Unpin a message
+// DELETE /api/rooms/:id/pin/:messageId
 router.delete('/:id/pin/:messageId', authMiddleware, async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id) || !isValidObjectId(req.params.messageId)) {
@@ -225,17 +285,19 @@ router.delete('/:id/pin/:messageId', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Room not found' });
     }
 
+    if (!hasRoomRole(room, req.user.id, ['admin', 'moderator'])) {
+      return res.status(403).json({ error: 'Only room moderators can unpin messages' });
+    }
+
     const message = await Message.findById(req.params.messageId);
-    if (message) {
+    if (message && message.roomId.toString() === room._id.toString()) {
       message.isPinned = false;
       message.pinnedBy = null;
       message.pinnedAt = null;
       await message.save();
     }
 
-    room.pinnedMessages = room.pinnedMessages.filter(
-      (id) => id.toString() !== req.params.messageId
-    );
+    room.pinnedMessages = room.pinnedMessages.filter((id) => id.toString() !== req.params.messageId);
     await room.save();
 
     res.json({ message: 'Message unpinned' });
@@ -245,11 +307,20 @@ router.delete('/:id/pin/:messageId', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/rooms/:id/pinned — Get pinned messages
+// GET /api/rooms/:id/pinned
 router.get('/:id/pinned', authMiddleware, async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.id).select('members creatorId').lean();
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    if (!findRoomMember(room, req.user.id)) {
+      return res.status(403).json({ error: 'Only room members can view pinned messages' });
     }
 
     const messages = await Message.find({
@@ -259,19 +330,17 @@ router.get('/:id/pinned', authMiddleware, async (req, res) => {
       .sort({ pinnedAt: -1 })
       .lean();
 
-    const formatted = messages.map((m) => ({
-      id: m._id.toString(),
-      userId: m.userId,
-      username: m.username,
-      content: m.isDeleted ? '[deleted]' : m.content,
-      timestamp: m.createdAt,
-      pinnedBy: m.pinnedBy,
-      pinnedAt: m.pinnedAt,
-      isAI: m.isAI,
-      reactions: m.reactions instanceof Map ? Object.fromEntries(m.reactions) : (m.reactions || {}),
-    }));
-
-    res.json(formatted);
+    res.json(messages.map((message) => ({
+      id: message._id.toString(),
+      userId: message.userId,
+      username: message.username,
+      content: message.isDeleted ? '[deleted]' : message.content,
+      timestamp: message.createdAt,
+      pinnedBy: message.pinnedBy,
+      pinnedAt: message.pinnedAt,
+      isAI: message.isAI || false,
+      reactions: message.reactions instanceof Map ? Object.fromEntries(message.reactions) : (message.reactions || {}),
+    })));
   } catch (err) {
     console.error('Get pinned messages error:', err);
     res.status(500).json({ error: 'Failed to load pinned messages' });

@@ -3,77 +3,136 @@ const authMiddleware = require('../middleware/auth');
 const Message = require('../models/Message');
 const Room = require('../models/Room');
 const Conversation = require('../models/Conversation');
+const User = require('../models/User');
+const { isValidObjectId, escapeRegex } = require('../helpers/validate');
 
 const router = express.Router();
 
-// GET /api/search/messages — Full-text search across group messages
+// GET /api/search/messages
 router.get('/messages', authMiddleware, async (req, res) => {
   try {
-    const { q, roomId, userId, startDate, endDate, isAI, isPinned, hasFile, page = 1, limit = 20 } = req.query;
+    const {
+      q,
+      roomId,
+      userId,
+      startDate,
+      endDate,
+      isAI,
+      isPinned,
+      hasFile,
+      fileType,
+      page = 1,
+      limit = 20,
+    } = req.query;
 
-    if (!q || q.trim().length === 0) {
+    const searchQuery = typeof q === 'string' ? q.trim() : '';
+    if (!searchQuery) {
       return res.status(400).json({ error: 'Search query is required' });
     }
 
-    // Cap limit
-    const parsedLimit = Math.min(50, Math.max(1, parseInt(limit) || 20));
-    const parsedPage = Math.max(1, parseInt(page) || 1);
-
-    const query = {};
-
-    // Text search
-    query.$text = { $search: q.trim() };
-
-    // Optional filters
-    if (roomId) query.roomId = roomId;
-    if (userId) query.userId = userId;
-    if (isAI === 'true') query.isAI = true;
-    if (isPinned === 'true') query.isPinned = true;
-    if (hasFile === 'true') query.fileUrl = { $ne: null };
-
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
-
-    // Exclude deleted messages from search
-    query.isDeleted = { $ne: true };
-
+    const parsedLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 20));
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const skip = (parsedPage - 1) * parsedLimit;
 
+    const [joinedRooms, currentUser] = await Promise.all([
+      Room.find({ 'members.userId': req.user.id }).select('_id name').lean(),
+      User.findById(req.user.id).select('blockedUsers').lean(),
+    ]);
+
+    const joinedRoomIds = joinedRooms.map((room) => room._id);
+    if (joinedRoomIds.length === 0) {
+      return res.json({ results: [], total: 0, page: parsedPage, totalPages: 0 });
+    }
+
+    if (roomId) {
+      if (!isValidObjectId(roomId)) {
+        return res.status(400).json({ error: 'Invalid room ID filter' });
+      }
+
+      const isMember = joinedRoomIds.some((id) => id.toString() === roomId.toString());
+      if (!isMember) {
+        return res.status(403).json({ error: 'You can only search rooms you are a member of' });
+      }
+    }
+
+    const filter = {
+      $text: { $search: searchQuery },
+      roomId: roomId || { $in: joinedRoomIds },
+      isDeleted: { $ne: true },
+    };
+
+    if (userId) {
+      filter.userId = userId;
+    }
+
+    if (isAI === 'true') {
+      filter.isAI = true;
+    }
+
+    if (isPinned === 'true') {
+      filter.isPinned = true;
+    }
+
+    if (hasFile === 'true') {
+      filter.fileUrl = { $ne: null };
+    }
+
+    if (fileType && typeof fileType === 'string') {
+      filter.fileType = fileType;
+    }
+
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) {
+        filter.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        filter.createdAt.$lte = new Date(endDate);
+      }
+    }
+
+    const blockedUsers = (currentUser?.blockedUsers || []).map((id) => id.toString());
+    if (blockedUsers.length > 0) {
+      if (typeof filter.userId === 'string' && blockedUsers.includes(filter.userId)) {
+        return res.json({ results: [], total: 0, page: parsedPage, totalPages: 0 });
+      }
+
+      filter.userId = filter.userId
+        ? filter.userId
+        : { $nin: blockedUsers };
+
+      if (typeof filter.userId === 'object' && !Array.isArray(filter.userId) && !filter.userId.$nin) {
+        filter.userId = { ...filter.userId, $nin: blockedUsers };
+      }
+    }
+
     const [messages, total] = await Promise.all([
-      Message.find(query, { score: { $meta: 'textScore' } })
-        .sort({ score: { $meta: 'textScore' } })
+      Message.find(filter, { score: { $meta: 'textScore' } })
+        .sort({ score: { $meta: 'textScore' }, createdAt: -1 })
         .skip(skip)
         .limit(parsedLimit)
         .lean(),
-      Message.countDocuments(query),
+      Message.countDocuments(filter),
     ]);
 
-    // Batch-fetch room names (avoid N+1)
-    const roomIds = [...new Set(messages.map(m => m.roomId?.toString()).filter(Boolean))];
-    const rooms = await Room.find({ _id: { $in: roomIds } }).select('name').lean();
-    const roomMap = {};
-    rooms.forEach(r => { roomMap[r._id.toString()] = r.name; });
-
-    const results = messages.map(m => ({
-      id: m._id.toString(),
-      content: m.content,
-      username: m.username,
-      userId: m.userId,
-      roomId: m.roomId?.toString(),
-      roomName: roomMap[m.roomId?.toString()] || null,
-      isAI: m.isAI,
-      isPinned: m.isPinned || false,
-      fileUrl: m.fileUrl || null,
-      fileName: m.fileName || null,
-      timestamp: m.createdAt,
-      score: m.score,
-    }));
+    const roomMap = new Map(joinedRooms.map((room) => [room._id.toString(), room.name]));
 
     res.json({
-      results,
+      results: messages.map((message) => ({
+        id: message._id.toString(),
+        content: message.content,
+        username: message.username,
+        userId: message.userId,
+        roomId: message.roomId?.toString() || null,
+        roomName: roomMap.get(message.roomId?.toString()) || null,
+        isAI: message.isAI || false,
+        isPinned: message.isPinned || false,
+        fileUrl: message.fileUrl || null,
+        fileName: message.fileName || null,
+        fileType: message.fileType || null,
+        timestamp: message.createdAt,
+        score: message.score,
+      })),
       total,
       page: parsedPage,
       totalPages: Math.ceil(total / parsedLimit),
@@ -84,64 +143,55 @@ router.get('/messages', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/search/conversations — Search within solo conversations
+// GET /api/search/conversations
 router.get('/conversations', authMiddleware, async (req, res) => {
   try {
-    const { q, page = 1, limit = 20 } = req.query;
-
-    if (!q || q.trim().length === 0) {
+    const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!searchQuery) {
       return res.status(400).json({ error: 'Search query is required' });
     }
 
-    const parsedLimit = Math.min(50, Math.max(1, parseInt(limit) || 20));
-    const parsedPage = Math.max(1, parseInt(page) || 1);
+    const parsedLimit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const parsedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
     const skip = (parsedPage - 1) * parsedLimit;
+    const safeRegex = new RegExp(escapeRegex(searchQuery), 'i');
 
-    const searchTerm = q.trim();
-
-    // Search in conversation titles and message content using regex
-    // (Conversation model doesn't have a text index, so we search differently)
-    const conversations = await Conversation.find({
+    const filter = {
       userId: req.user.id,
       $or: [
-        { title: { $regex: searchTerm, $options: 'i' } },
-        { 'messages.content': { $regex: searchTerm, $options: 'i' } },
+        { title: safeRegex },
+        { 'messages.content': safeRegex },
       ],
-    })
-      .sort({ updatedAt: -1 })
-      .skip(skip)
-      .limit(parsedLimit)
-      .lean();
+    };
 
-    const total = await Conversation.countDocuments({
-      userId: req.user.id,
-      $or: [
-        { title: { $regex: searchTerm, $options: 'i' } },
-        { 'messages.content': { $regex: searchTerm, $options: 'i' } },
-      ],
-    });
-
-    const results = conversations.map(c => {
-      // Find matching messages within the conversation
-      const matchingMessages = c.messages.filter(
-        m => m.content.toLowerCase().includes(searchTerm.toLowerCase())
-      ).slice(0, 3);
-
-      return {
-        id: c._id.toString(),
-        title: c.title,
-        messageCount: c.messages.length,
-        matchingSnippets: matchingMessages.map(m => ({
-          role: m.role,
-          content: m.content.substring(0, 150),
-          timestamp: m.timestamp,
-        })),
-        updatedAt: c.updatedAt,
-      };
-    });
+    const [conversations, total] = await Promise.all([
+      Conversation.find(filter)
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(parsedLimit)
+        .lean(),
+      Conversation.countDocuments(filter),
+    ]);
 
     res.json({
-      results,
+      results: conversations.map((conversation) => {
+        const snippets = conversation.messages
+          .filter((message) => safeRegex.test(message.content))
+          .slice(0, 3)
+          .map((message) => ({
+            role: message.role,
+            content: message.content.slice(0, 150),
+            timestamp: message.timestamp,
+          }));
+
+        return {
+          id: conversation._id.toString(),
+          title: conversation.title,
+          messageCount: conversation.messages.length,
+          matchingSnippets: snippets,
+          updatedAt: conversation.updatedAt,
+        };
+      }),
       total,
       page: parsedPage,
       totalPages: Math.ceil(total / parsedLimit),

@@ -33,6 +33,7 @@ const uploadRoutes = require('./routes/uploads');
 // Middleware
 const socketAuthMiddleware = require('./middleware/socketAuth');
 const { apiLimiter } = require('./middleware/rateLimit');
+const { ALLOWED_TYPES, MAX_FILE_SIZE } = require('./middleware/upload');
 
 // Models
 const Room = require('./models/Room');
@@ -40,7 +41,7 @@ const Message = require('./models/Message');
 const User = require('./models/User');
 
 // Helpers
-const { isValidObjectId, findRoomMember } = require('./helpers/validate');
+const { isValidObjectId, findRoomMember, hasRoomRole } = require('./helpers/validate');
 
 // Services
 const { sendGroupMessage } = require('./services/gemini');
@@ -50,6 +51,9 @@ const server = http.createServer(app);
 
 // CORS
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const EDIT_WINDOW_MS = (parseInt(process.env.MESSAGE_EDIT_WINDOW_MINUTES, 10) || 15) * 60 * 1000;
+const AI_USERNAME = process.env.GEMINI_GROUP_BOT_NAME || 'Gemini';
+const ALLOWED_REACTIONS = new Set(['👍', '🔥', '🤯', '💡']);
 app.use(cors({
   origin: CLIENT_URL,
   credentials: true,
@@ -123,10 +127,29 @@ function checkFlood(socketId) {
   return entry.count > FLOOD_MAX;
 }
 
+function getAck(callback) {
+  return typeof callback === 'function' ? callback : () => {};
+}
+
+function emitSocketError(socket, ack, error) {
+  socket.emit('error_message', { error });
+  ack({ success: false, error });
+}
+
+function isFlooded(socket, ack) {
+  if (!checkFlood(socket.id)) return false;
+  emitSocketError(socket, ack, 'Too many actions in a short time. Please slow down.');
+  return true;
+}
+
 function getRoomOnlineUsers(roomId) {
   const users = roomUsers.get(roomId);
   if (!users) return [];
   return Array.from(users.values());
+}
+
+function isSocketInRoom(roomId, socketId) {
+  return Boolean(roomUsers.get(roomId)?.has(socketId));
 }
 
 function addUserToRoom(roomId, socketId, user) {
@@ -179,9 +202,6 @@ function clearTyping(roomId, userId) {
   }
 }
 
-// Status order for preventing backward transitions
-const STATUS_ORDER = { sent: 0, delivered: 1, read: 2 };
-
 // Format a message document for client consumption
 function formatMessage(msg) {
   return {
@@ -204,6 +224,79 @@ function formatMessage(msg) {
     fileType: msg.fileType || null,
     fileSize: msg.fileSize || null,
   };
+}
+
+async function loadRoomForMember(roomId, userId, projection = 'members creatorId maxUsers aiHistory') {
+  if (!isValidObjectId(roomId)) {
+    return { room: null, error: 'Invalid room ID' };
+  }
+
+  const room = await Room.findById(roomId).select(projection);
+  if (!room) {
+    return { room: null, error: 'Room not found' };
+  }
+
+  if (!findRoomMember(room, userId)) {
+    return { room: null, error: 'Join this room before using chat actions' };
+  }
+
+  return { room, error: null };
+}
+
+function validateAttachmentPayload({ fileUrl, fileName, fileType, fileSize }) {
+  const hasAnyFileField = fileUrl || fileName || fileType || fileSize;
+  if (!hasAnyFileField) {
+    return null;
+  }
+
+  if (!fileUrl || !fileName || !fileType || typeof fileSize !== 'number') {
+    return 'Incomplete file attachment data';
+  }
+
+  if (!fileUrl.startsWith('/api/uploads/')) {
+    return 'Invalid file URL';
+  }
+
+  if (!ALLOWED_TYPES[fileType]) {
+    return 'Unsupported file type';
+  }
+
+  if (fileSize <= 0 || fileSize > MAX_FILE_SIZE) {
+    return `Files must be smaller than ${Math.round(MAX_FILE_SIZE / (1024 * 1024))}MB`;
+  }
+
+  return null;
+}
+
+async function hasBlockingRelationship(userId, otherUserId) {
+  if (!isValidObjectId(userId) || !isValidObjectId(otherUserId)) {
+    return false;
+  }
+
+  const [user, otherUser] = await Promise.all([
+    User.findById(userId).select('blockedUsers').lean(),
+    User.findById(otherUserId).select('blockedUsers').lean(),
+  ]);
+
+  const userBlocked = (user?.blockedUsers || []).some((blockedId) => blockedId.toString() === otherUserId.toString());
+  const otherUserBlocked = (otherUser?.blockedUsers || []).some((blockedId) => blockedId.toString() === userId.toString());
+
+  return userBlocked || otherUserBlocked;
+}
+
+async function maybeMarkMessageDelivered(message, roomId) {
+  const otherUsersOnline = getRoomOnlineUsers(roomId).some((user) => user.id !== message.userId);
+  if (!otherUsersOnline || message.status !== 'sent') {
+    return;
+  }
+
+  message.status = 'delivered';
+  await message.save();
+
+  io.to(roomId).emit('message_status_update', {
+    messageId: message._id.toString(),
+    status: 'delivered',
+  });
 }
 
 // -- Socket.IO connection handler --
@@ -240,36 +333,24 @@ io.on('connection', async (socket) => {
 
   // -- join_room (with membership enforcement) --
   socket.on('join_room', async (roomId, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
     try {
-      if (!isValidObjectId(roomId)) {
-        socket.emit('error_message', { error: 'Invalid room ID' });
-        return ack({ success: false, error: 'Invalid room ID' });
+      const { room, error } = await loadRoomForMember(roomId, socket.user.id, 'members');
+      if (error) {
+        return emitSocketError(socket, ack, error);
       }
 
-      const room = await Room.findById(roomId);
-      if (!room) {
-        socket.emit('error_message', { error: 'Room not found' });
-        return ack({ success: false, error: 'Room not found' });
-      }
-
-      // Auto-add user to room members if not already a member
-      let member = findRoomMember(room, socket.user.id);
-      if (!member) {
-        // Check capacity
-        if (room.members.length >= room.maxUsers) {
-          socket.emit('error_message', { error: 'Room is full' });
-          return ack({ success: false, error: 'Room is full' });
-        }
-        room.members.push({ userId: socket.user.id, role: 'member', joinedAt: new Date() });
-        await room.save();
+      if (isSocketInRoom(roomId, socket.id)) {
+        io.to(roomId).emit('room_users', getRoomOnlineUsers(roomId));
+        return ack({ success: true, roomId });
       }
 
       // Leave previous rooms
       const leftRooms = removeUserFromAllRooms(socket.id);
       leftRooms.forEach(({ roomId: leftRoomId, user }) => {
+        clearTyping(leftRoomId, user.id);
         socket.leave(leftRoomId);
         io.to(leftRoomId).emit('user_left', { username: user.username, userId: user.id });
         io.to(leftRoomId).emit('room_users', getRoomOnlineUsers(leftRoomId));
@@ -282,38 +363,45 @@ io.on('connection', async (socket) => {
       io.to(roomId).emit('room_users', getRoomOnlineUsers(roomId));
 
       // Mark unread messages as delivered
-      try {
+      if (room) {
         await Message.updateMany(
           { roomId, status: 'sent', userId: { $ne: socket.user.id } },
           { $set: { status: 'delivered' } }
         );
-      } catch (err) {
-        console.error('Mark delivered error:', err.message);
       }
 
-      ack({ success: true });
+      ack({ success: true, roomId });
     } catch (err) {
       console.error('Join room error:', err);
-      socket.emit('error_message', { error: 'Failed to join room' });
-      ack({ success: false, error: 'Failed to join room' });
+      emitSocketError(socket, ack, 'Failed to join room');
     }
   });
 
   // -- leave_room --
-  socket.on('leave_room', (roomId) => {
-    if (checkFlood(socket.id)) return;
+  socket.on('leave_room', (roomId, callback) => {
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
+    if (!roomId || !isSocketInRoom(roomId, socket.id)) {
+      return emitSocketError(socket, ack, 'You are not connected to that room');
+    }
+
+    clearTyping(roomId, socket.user.id);
     const user = removeUserFromRoom(roomId, socket.id);
     socket.leave(roomId);
     if (user) {
       io.to(roomId).emit('user_left', { username: user.username, userId: user.id });
       io.to(roomId).emit('room_users', getRoomOnlineUsers(roomId));
     }
+    ack({ success: true, roomId });
   });
 
   // -- typing_start --
-  socket.on('typing_start', ({ roomId }) => {
-    if (checkFlood(socket.id)) return;
-    if (!roomId) return;
+  socket.on('typing_start', ({ roomId } = {}, callback) => {
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
+    if (!roomId || !isSocketInRoom(roomId, socket.id)) {
+      return emitSocketError(socket, ack, 'Join the room before sending typing updates');
+    }
 
     clearTyping(roomId, socket.user.id);
 
@@ -338,29 +426,48 @@ io.on('connection', async (socket) => {
       userId: socket.user.id,
       username: socket.user.username,
     });
+
+    ack({ success: true });
   });
 
   // -- typing_stop --
-  socket.on('typing_stop', ({ roomId }) => {
-    if (checkFlood(socket.id)) return;
-    if (!roomId) return;
+  socket.on('typing_stop', ({ roomId } = {}, callback) => {
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
+    if (!roomId || !isSocketInRoom(roomId, socket.id)) {
+      return emitSocketError(socket, ack, 'Join the room before sending typing updates');
+    }
     clearTyping(roomId, socket.user.id);
     socket.to(roomId).emit('typing_stop', {
       userId: socket.user.id,
       username: socket.user.username,
     });
+    ack({ success: true });
   });
 
   // -- mark_read (with backward-transition guard) --
-  socket.on('mark_read', async ({ roomId, messageIds }) => {
-    if (checkFlood(socket.id)) return;
-    if (!roomId || !messageIds || !Array.isArray(messageIds)) return;
+  socket.on('mark_read', async ({ roomId, messageIds } = {}, callback) => {
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
+    if (!roomId || !Array.isArray(messageIds) || messageIds.length === 0) {
+      return emitSocketError(socket, ack, 'Room ID and message IDs are required');
+    }
+
+    if (!isSocketInRoom(roomId, socket.id)) {
+      return emitSocketError(socket, ack, 'Join the room before marking messages as read');
+    }
+
+    const validMessageIds = messageIds.filter((messageId) => isValidObjectId(messageId));
+    if (validMessageIds.length === 0) {
+      return emitSocketError(socket, ack, 'No valid message IDs were provided');
+    }
 
     try {
       // Only update messages that are not already 'read' (prevents backward transition)
-      await Message.updateMany(
+      const result = await Message.updateMany(
         {
-          _id: { $in: messageIds },
+          _id: { $in: validMessageIds },
+          roomId,
           userId: { $ne: socket.user.id },
           status: { $in: ['sent', 'delivered'] },
         },
@@ -373,43 +480,54 @@ io.on('connection', async (socket) => {
       );
 
       io.to(roomId).emit('message_read', {
-        messageIds,
+        messageIds: validMessageIds,
         readBy: socket.user.id,
         username: socket.user.username,
       });
+
+      ack({ success: true, updatedCount: result.modifiedCount || 0 });
     } catch (err) {
       console.error('Mark read error:', err.message);
+      emitSocketError(socket, ack, 'Failed to mark messages as read');
     }
   });
 
   // -- send_message (with membership check) --
   socket.on('send_message', async ({ roomId, content, fileUrl, fileName, fileType, fileSize }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
-    const hasContent = content && content.trim().length > 0;
-    const hasFile = fileUrl && fileName;
-    if (!hasContent && !hasFile) return ack({ success: false, error: 'Message content or file is required' });
-
-    // Clear typing state
-    clearTyping(roomId, socket.user.id);
-    socket.to(roomId).emit('typing_stop', { userId: socket.user.id, username: socket.user.username });
+    const textContent = typeof content === 'string' ? content.trim() : '';
+    const hasFile = Boolean(fileUrl || fileName || fileType || fileSize);
+    const attachmentError = validateAttachmentPayload({ fileUrl, fileName, fileType, fileSize });
+    if (!textContent && !hasFile) {
+      return emitSocketError(socket, ack, 'Message content or a file is required');
+    }
+    if (textContent.length > 4000) {
+      return emitSocketError(socket, ack, 'Messages must be under 4000 characters');
+    }
+    if (attachmentError) {
+      return emitSocketError(socket, ack, attachmentError);
+    }
 
     try {
-      if (!isValidObjectId(roomId)) return ack({ success: false, error: 'Invalid room ID' });
+      const { room, error } = await loadRoomForMember(roomId, socket.user.id, 'members');
+      if (error) {
+        return emitSocketError(socket, ack, error);
+      }
 
-      // Verify membership
-      const room = await Room.findById(roomId).select('members').lean();
-      if (!room) return ack({ success: false, error: 'Room not found' });
+      if (!isSocketInRoom(roomId, socket.id)) {
+        return emitSocketError(socket, ack, 'Join the room before sending messages');
+      }
 
-      const member = findRoomMember(room, socket.user.id);
-      if (!member) return ack({ success: false, error: 'You are not a member of this room' });
+      clearTyping(roomId, socket.user.id);
+      socket.to(roomId).emit('typing_stop', { userId: socket.user.id, username: socket.user.username });
 
       const msg = new Message({
         roomId,
         userId: socket.user.id,
         username: socket.user.username,
-        content: hasContent ? content.trim() : (fileName || 'File'),
+        content: textContent || fileName,
         isAI: false,
         status: 'sent',
         reactions: new Map(),
@@ -420,61 +538,62 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
+      await maybeMarkMessageDelivered(msg, roomId);
       const messageData = formatMessage(msg);
       io.to(roomId).emit('receive_message', messageData);
 
-      // Mark as delivered if others are in the room
-      const roomOnline = getRoomOnlineUsers(roomId);
-      if (roomOnline.length > 1) {
-        msg.status = 'delivered';
-        await msg.save();
-        io.to(roomId).emit('message_status_update', {
-          messageId: msg._id.toString(),
-          status: 'delivered',
-        });
-      }
-
-      ack({ success: true, messageId: msg._id.toString() });
+      ack({ success: true, messageId: msg._id.toString(), message: messageData, roomMemberCount: room.members.length });
     } catch (err) {
       console.error('Send message error:', err);
-      ack({ success: false, error: 'Failed to send message' });
+      emitSocketError(socket, ack, 'Failed to send message');
     }
   });
 
   // -- reply_message (with membership check) --
   socket.on('reply_message', async ({ roomId, content, replyToId }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
-    if (!content || content.trim().length === 0) return ack({ success: false, error: 'Content is required' });
-
-    clearTyping(roomId, socket.user.id);
+    const textContent = typeof content === 'string' ? content.trim() : '';
+    if (!textContent) return emitSocketError(socket, ack, 'Content is required');
+    if (textContent.length > 4000) return emitSocketError(socket, ack, 'Replies must be under 4000 characters');
 
     try {
-      if (!isValidObjectId(roomId)) return ack({ success: false, error: 'Invalid room ID' });
+      const { error } = await loadRoomForMember(roomId, socket.user.id, 'members');
+      if (error) return emitSocketError(socket, ack, error);
+      if (!isSocketInRoom(roomId, socket.id)) {
+        return emitSocketError(socket, ack, 'Join the room before replying');
+      }
 
-      // Verify membership
-      const room = await Room.findById(roomId).select('members').lean();
-      if (!room) return ack({ success: false, error: 'Room not found' });
-      if (!findRoomMember(room, socket.user.id)) return ack({ success: false, error: 'Not a member' });
+      clearTyping(roomId, socket.user.id);
 
       let replyTo = null;
-      if (replyToId && isValidObjectId(replyToId)) {
-        const parentMsg = await Message.findById(replyToId).lean();
-        if (parentMsg) {
-          replyTo = {
-            id: parentMsg._id.toString(),
-            username: parentMsg.username,
-            content: parentMsg.isDeleted ? '[deleted]' : parentMsg.content.substring(0, 100),
-          };
+      if (replyToId) {
+        if (!isValidObjectId(replyToId)) {
+          return emitSocketError(socket, ack, 'Invalid reply target');
         }
+
+        const parentMsg = await Message.findById(replyToId).lean();
+        if (!parentMsg || parentMsg.roomId.toString() !== roomId.toString()) {
+          return emitSocketError(socket, ack, 'Reply target was not found in this room');
+        }
+
+        if (await hasBlockingRelationship(socket.user.id, parentMsg.userId)) {
+          return emitSocketError(socket, ack, 'You cannot reply because one of you has blocked the other');
+        }
+
+        replyTo = {
+          id: parentMsg._id.toString(),
+          username: parentMsg.username,
+          content: parentMsg.isDeleted ? '[deleted]' : parentMsg.content.substring(0, 100),
+        };
       }
 
       const msg = new Message({
         roomId,
         userId: socket.user.id,
         username: socket.user.username,
-        content: content.trim(),
+        content: textContent,
         isAI: false,
         replyTo,
         status: 'sent',
@@ -482,32 +601,43 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
-      io.to(roomId).emit('receive_message', formatMessage(msg));
-      ack({ success: true, messageId: msg._id.toString() });
+      await maybeMarkMessageDelivered(msg, roomId);
+      const messageData = formatMessage(msg);
+      io.to(roomId).emit('receive_message', messageData);
+      ack({ success: true, messageId: msg._id.toString(), message: messageData });
     } catch (err) {
       console.error('Reply message error:', err);
-      ack({ success: false, error: 'Failed to send reply' });
+      emitSocketError(socket, ack, 'Failed to send reply');
     }
   });
 
   // -- add_reaction (with membership check) --
   socket.on('add_reaction', async ({ roomId, messageId, emoji }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
     try {
-      if (!isValidObjectId(messageId)) return ack({ success: false, error: 'Invalid message ID' });
+      if (!isValidObjectId(roomId) || !isValidObjectId(messageId)) {
+        return emitSocketError(socket, ack, 'Invalid room or message ID');
+      }
+
+      if (!ALLOWED_REACTIONS.has(emoji)) {
+        return emitSocketError(socket, ack, 'Unsupported reaction');
+      }
+
+      const { error } = await loadRoomForMember(roomId, socket.user.id, 'members');
+      if (error) {
+        return emitSocketError(socket, ack, error);
+      }
 
       const msg = await Message.findById(messageId);
-      if (!msg) return ack({ success: false, error: 'Message not found' });
-      if (msg.isDeleted) return ack({ success: false, error: 'Cannot react to a deleted message' });
+      if (!msg || msg.roomId.toString() !== roomId.toString()) {
+        return emitSocketError(socket, ack, 'Message not found in this room');
+      }
+      if (msg.isDeleted) return emitSocketError(socket, ack, 'Cannot react to a deleted message');
 
-      // Verify membership
-      if (roomId && isValidObjectId(roomId)) {
-        const room = await Room.findById(roomId).select('members').lean();
-        if (room && !findRoomMember(room, socket.user.id)) {
-          return ack({ success: false, error: 'Not a member' });
-        }
+      if (await hasBlockingRelationship(socket.user.id, msg.userId)) {
+        return emitSocketError(socket, ack, 'You cannot react because one of you has blocked the other');
       }
 
       const currentReactors = msg.reactions.get(emoji) || [];
@@ -529,38 +659,32 @@ io.on('connection', async (socket) => {
 
       const reactionsObj = Object.fromEntries(msg.reactions);
       io.to(roomId).emit('reaction_update', { messageId, reactions: reactionsObj });
-      ack({ success: true });
+      ack({ success: true, messageId, reactions: reactionsObj });
     } catch (err) {
       console.error('Reaction error:', err);
-      ack({ success: false, error: 'Failed to update reaction' });
+      emitSocketError(socket, ack, 'Failed to update reaction');
     }
   });
 
   // -- trigger_ai (with membership check and throttle) --
   socket.on('trigger_ai', async ({ roomId, prompt }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
-    if (!prompt || prompt.trim().length === 0) return ack({ success: false, error: 'Prompt is required' });
+    if (!prompt || prompt.trim().length === 0) return emitSocketError(socket, ack, 'Prompt is required');
 
     io.to(roomId).emit('ai_thinking', { roomId, status: true });
 
     try {
-      if (!isValidObjectId(roomId)) {
+      const { room, error } = await loadRoomForMember(roomId, socket.user.id);
+      if (error) {
         io.to(roomId).emit('ai_thinking', { roomId, status: false });
-        return ack({ success: false, error: 'Invalid room ID' });
+        return emitSocketError(socket, ack, error);
       }
 
-      const room = await Room.findById(roomId);
-      if (!room) {
+      if (!isSocketInRoom(roomId, socket.id)) {
         io.to(roomId).emit('ai_thinking', { roomId, status: false });
-        return ack({ success: false, error: 'Room not found' });
-      }
-
-      // Verify membership
-      if (!findRoomMember(room, socket.user.id)) {
-        io.to(roomId).emit('ai_thinking', { roomId, status: false });
-        return ack({ success: false, error: 'Not a member' });
+        return emitSocketError(socket, ack, 'Join the room before using AI');
       }
 
       const responseText = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username);
@@ -579,7 +703,7 @@ io.on('connection', async (socket) => {
       const aiMsg = new Message({
         roomId,
         userId: 'ai',
-        username: 'GeminiX',
+        username: AI_USERNAME,
         content: responseText,
         isAI: true,
         triggeredBy: socket.user.username,
@@ -589,8 +713,9 @@ io.on('connection', async (socket) => {
       await aiMsg.save();
 
       io.to(roomId).emit('ai_thinking', { roomId, status: false });
-      io.to(roomId).emit('ai_response', formatMessage(aiMsg));
-      ack({ success: true });
+      const aiMessage = formatMessage(aiMsg);
+      io.to(roomId).emit('ai_response', aiMessage);
+      ack({ success: true, message: aiMessage });
     } catch (err) {
       console.error('AI trigger error:', err);
       io.to(roomId).emit('ai_thinking', { roomId, status: false });
@@ -598,8 +723,8 @@ io.on('connection', async (socket) => {
       const errorMsg = new Message({
         roomId,
         userId: 'ai',
-        username: 'GeminiX',
-        content: '⚠️ I encountered an error while processing your request. Please try again.',
+        username: AI_USERNAME,
+        content: 'I ran into an error while processing that request. Please try again.',
         isAI: true,
         triggeredBy: socket.user.username,
         status: 'delivered',
@@ -607,43 +732,50 @@ io.on('connection', async (socket) => {
       });
       await errorMsg.save();
       io.to(roomId).emit('ai_response', formatMessage(errorMsg));
-      ack({ success: false, error: 'AI request failed' });
+      emitSocketError(socket, ack, 'AI request failed');
     }
   });
 
   // -- edit_message (within 15-min window, owner only) --
   socket.on('edit_message', async ({ roomId, messageId, newContent }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
     if (!newContent || newContent.trim().length === 0) {
-      return ack({ success: false, error: 'Content is required' });
+      return emitSocketError(socket, ack, 'Content is required');
+    }
+
+    if (newContent.trim().length > 4000) {
+      return emitSocketError(socket, ack, 'Messages must be under 4000 characters');
     }
 
     try {
-      if (!isValidObjectId(messageId)) return ack({ success: false, error: 'Invalid message ID' });
+      const { error } = await loadRoomForMember(roomId, socket.user.id, 'members');
+      if (error) return emitSocketError(socket, ack, error);
+      if (!isValidObjectId(messageId)) return emitSocketError(socket, ack, 'Invalid message ID');
 
       const msg = await Message.findById(messageId);
-      if (!msg) return ack({ success: false, error: 'Message not found' });
-      if (msg.isDeleted) return ack({ success: false, error: 'Cannot edit a deleted message' });
-      if (msg.isAI) return ack({ success: false, error: 'Cannot edit AI messages' });
+      if (!msg || msg.roomId.toString() !== roomId.toString()) return emitSocketError(socket, ack, 'Message not found in this room');
+      if (msg.isDeleted) return emitSocketError(socket, ack, 'Cannot edit a deleted message');
+      if (msg.isAI) return emitSocketError(socket, ack, 'Cannot edit AI messages');
 
       // Only the author can edit
       if (msg.userId !== socket.user.id) {
-        return ack({ success: false, error: 'You can only edit your own messages' });
+        return emitSocketError(socket, ack, 'You can only edit your own messages');
       }
 
-      // 15-minute edit window
-      const editWindow = 15 * 60 * 1000;
-      if (Date.now() - msg.createdAt.getTime() > editWindow) {
-        return ack({ success: false, error: 'Edit window has expired (15 minutes)' });
+      if (Date.now() - msg.createdAt.getTime() > EDIT_WINDOW_MS) {
+        return emitSocketError(socket, ack, 'The edit window has expired');
       }
 
-      // Save original content on first edit
       if (!msg.originalContent) {
         msg.originalContent = msg.content;
       }
 
+      msg.editHistory.push({
+        content: msg.content,
+        editedAt: new Date(),
+      });
       msg.content = newContent.trim();
       msg.isEdited = true;
       msg.editedAt = new Date();
@@ -656,79 +788,93 @@ io.on('connection', async (socket) => {
         editedAt: msg.editedAt,
       });
 
-      ack({ success: true });
+      ack({ success: true, messageId: msg._id.toString(), editedAt: msg.editedAt });
     } catch (err) {
       console.error('Edit message error:', err);
-      ack({ success: false, error: 'Failed to edit message' });
+      emitSocketError(socket, ack, 'Failed to edit message');
     }
   });
 
   // -- delete_message (soft delete — owner or moderator/admin) --
   socket.on('delete_message', async ({ roomId, messageId }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
     try {
-      if (!isValidObjectId(messageId)) return ack({ success: false, error: 'Invalid message ID' });
-      if (!isValidObjectId(roomId)) return ack({ success: false, error: 'Invalid room ID' });
-
-      const msg = await Message.findById(messageId);
-      if (!msg) return ack({ success: false, error: 'Message not found' });
-      if (msg.isDeleted) return ack({ success: false, error: 'Already deleted' });
-
-      const isOwner = msg.userId === socket.user.id;
-
-      // Check if user is a moderator/admin in the room
-      let isModOrAdmin = false;
-      const room = await Room.findById(roomId).select('members creatorId').lean();
-      if (room) {
-        const member = findRoomMember(room, socket.user.id);
-        isModOrAdmin = member && ['admin', 'moderator'].includes(member.role);
-        if (room.creatorId.toString() === socket.user.id) isModOrAdmin = true;
+      if (!isValidObjectId(messageId) || !isValidObjectId(roomId)) {
+        return emitSocketError(socket, ack, 'Invalid room or message ID');
       }
 
+      const room = await Room.findById(roomId).select('members creatorId pinnedMessages');
+      if (!room || !findRoomMember(room, socket.user.id)) {
+        return emitSocketError(socket, ack, 'Join this room before deleting messages');
+      }
+
+      const msg = await Message.findById(messageId);
+      if (!msg || msg.roomId.toString() !== roomId.toString()) return emitSocketError(socket, ack, 'Message not found in this room');
+      if (msg.isDeleted) return emitSocketError(socket, ack, 'This message has already been deleted');
+
+      const isOwner = msg.userId === socket.user.id;
+      const isModOrAdmin = hasRoomRole(room, socket.user.id, ['admin', 'moderator']);
+
       if (!isOwner && !isModOrAdmin) {
-        return ack({ success: false, error: 'You can only delete your own messages' });
+        return emitSocketError(socket, ack, 'You can only delete your own messages unless you moderate this room');
       }
 
       msg.isDeleted = true;
       msg.deletedAt = new Date();
       msg.deletedBy = socket.user.id;
+      msg.isPinned = false;
+      msg.pinnedBy = null;
+      msg.pinnedAt = null;
       await msg.save();
+
+      room.pinnedMessages = room.pinnedMessages.filter((id) => id.toString() !== messageId.toString());
+      await room.save();
 
       io.to(roomId).emit('message_deleted', {
         messageId: msg._id.toString(),
         deletedBy: socket.user.username,
       });
 
-      ack({ success: true });
+      ack({ success: true, messageId: msg._id.toString() });
     } catch (err) {
       console.error('Delete message error:', err);
-      ack({ success: false, error: 'Failed to delete message' });
+      emitSocketError(socket, ack, 'Failed to delete message');
     }
   });
 
   // -- pin_message (admin/moderator/creator only) --
   socket.on('pin_message', async ({ roomId, messageId }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
     try {
       if (!isValidObjectId(messageId) || !isValidObjectId(roomId)) {
-        return ack({ success: false, error: 'Invalid ID' });
+        return emitSocketError(socket, ack, 'Invalid room or message ID');
       }
 
-      const room = await Room.findById(roomId);
-      if (!room) return ack({ success: false, error: 'Room not found' });
+      const room = await Room.findById(roomId).select('members creatorId pinnedMessages');
+      if (!room || !findRoomMember(room, socket.user.id)) {
+        return emitSocketError(socket, ack, 'Join this room before pinning messages');
+      }
 
       // Check permissions (any member can pin for now — simple approach)
-      if (!findRoomMember(room, socket.user.id)) {
-        return ack({ success: false, error: 'Not a member' });
+      if (!isSocketInRoom(roomId, socket.id)) {
+        return emitSocketError(socket, ack, 'Join the room before pinning messages');
+      }
+
+      if (!hasRoomRole(room, socket.user.id, ['admin', 'moderator'])) {
+        return emitSocketError(socket, ack, 'Only room moderators can pin messages');
       }
 
       const msg = await Message.findById(messageId);
-      if (!msg || msg.roomId.toString() !== roomId) {
-        return ack({ success: false, error: 'Message not found in this room' });
+      if (!msg || msg.roomId.toString() !== roomId.toString()) {
+        return emitSocketError(socket, ack, 'Message not found in this room');
+      }
+
+      if (msg.isDeleted) {
+        return emitSocketError(socket, ack, 'Deleted messages cannot be pinned');
       }
 
       msg.isPinned = true;
@@ -736,9 +882,10 @@ io.on('connection', async (socket) => {
       msg.pinnedAt = new Date();
       await msg.save();
 
-      await Room.findByIdAndUpdate(roomId, {
-        $addToSet: { pinnedMessages: messageId },
-      });
+      if (!room.pinnedMessages.some((id) => id.toString() === messageId.toString())) {
+        room.pinnedMessages.push(msg._id);
+        await room.save();
+      }
 
       io.to(roomId).emit('message_pinned', {
         messageId,
@@ -753,36 +900,52 @@ io.on('connection', async (socket) => {
         },
       });
 
-      ack({ success: true });
+      ack({ success: true, messageId });
     } catch (err) {
       console.error('Pin message error:', err);
-      ack({ success: false, error: 'Failed to pin' });
+      emitSocketError(socket, ack, 'Failed to pin message');
     }
   });
 
   // -- unpin_message --
   socket.on('unpin_message', async ({ roomId, messageId }, callback) => {
-    if (checkFlood(socket.id)) return;
-    const ack = typeof callback === 'function' ? callback : () => {};
+    const ack = getAck(callback);
+    if (isFlooded(socket, ack)) return;
 
     try {
+      if (!isValidObjectId(messageId) || !isValidObjectId(roomId)) {
+        return emitSocketError(socket, ack, 'Invalid room or message ID');
+      }
+
+      const room = await Room.findById(roomId).select('members creatorId pinnedMessages');
+      if (!room || !findRoomMember(room, socket.user.id)) {
+        return emitSocketError(socket, ack, 'Join this room before unpinning messages');
+      }
+
+      if (!isSocketInRoom(roomId, socket.id)) {
+        return emitSocketError(socket, ack, 'Join the room before unpinning messages');
+      }
+
+      if (!hasRoomRole(room, socket.user.id, ['admin', 'moderator'])) {
+        return emitSocketError(socket, ack, 'Only room moderators can unpin messages');
+      }
+
       const msg = await Message.findById(messageId);
-      if (msg) {
+      if (msg && msg.roomId.toString() === roomId.toString()) {
         msg.isPinned = false;
         msg.pinnedBy = null;
         msg.pinnedAt = null;
         await msg.save();
       }
 
-      await Room.findByIdAndUpdate(roomId, {
-        $pull: { pinnedMessages: messageId },
-      });
+      room.pinnedMessages = room.pinnedMessages.filter((id) => id.toString() !== messageId.toString());
+      await room.save();
 
       io.to(roomId).emit('message_unpinned', { messageId });
-      ack({ success: true });
+      ack({ success: true, messageId });
     } catch (err) {
       console.error('Unpin message error:', err);
-      ack({ success: false, error: 'Failed to unpin' });
+      emitSocketError(socket, ack, 'Failed to unpin message');
     }
   });
 

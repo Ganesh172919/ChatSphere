@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, Eye, EyeOff, Sparkles } from 'lucide-react';
 import { loginUser } from '../api/auth';
@@ -10,11 +10,28 @@ const GOOGLE_AUTH_URL = '/api/auth/google';
 
 export default function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const error = searchParams.get('error');
+    if (!error) {
+      return;
+    }
+
+    const errorMessageMap: Record<string, string> = {
+      google_auth_failed: 'Google sign-in failed. Please try again.',
+      google_not_configured: 'Google sign-in is not configured for this local setup yet.',
+      google_exchange_failed: 'Google sign-in could not be completed. Please try again.',
+    };
+
+    toast.error(errorMessageMap[error] || 'Authentication failed. Please try again.');
+    navigate('/login', { replace: true });
+  }, [navigate, searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -50,3 +50,8 @@ export async function resetPassword(email: string, token: string, newPassword: s
   const { data } = await api.post<{ message: string }>('/auth/reset-password', { email, token, newPassword });
   return data;
 }
+
+export async function exchangeGoogleCode(code: string): Promise<AuthResponse> {
+  const { data } = await api.post<AuthResponse>('/auth/google/exchange', { code });
+  return data;
+}

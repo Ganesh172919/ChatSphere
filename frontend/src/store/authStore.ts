@@ -8,6 +8,7 @@ interface User {
   displayName?: string;
   avatar?: string;
   authProvider?: string;
+  isAdmin?: boolean;
   createdAt: string;
 }
 

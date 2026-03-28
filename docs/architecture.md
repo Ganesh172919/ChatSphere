@@ -1,124 +1,212 @@
 # ChatSphere Architecture
 
-## Overall Architecture
+## Source Of Truth
 
-ChatSphere is a modern full-stack web application designed for high-performance real-time messaging and deep AI reasoning. It follows a client-server model with a persistent data layer and real-time bidirectional event-based communication.
+ChatSphere now has one backend runtime path:
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                    CLIENT LAYER                          │
-│  React 18 + TypeScript + Vite + TailwindCSS + Zustand   │
-│  13 Pages · 19 Components · Framer Motion animations    │
-└────────────────────────┬─────────────────────────────────┘
-                         │  HTTP REST + WebSocket (Socket.IO)
-┌────────────────────────▼─────────────────────────────────┐
-│                    SERVER LAYER                           │
-│  Express.js REST API + Socket.IO WebSocket Server        │
-│  15 Route Modules · JWT + OAuth Middleware               │
-├──────────────┬──────────────┬────────────────────────────┤
-│  AI LAYER    │  AUTH LAYER  │  MODERATION LAYER          │
-│  Gemini API  │  Passport.js │  Reports · Blocks · Admin  │
-│  Smart Reply │  JWT Rotate  │  Role-based access         │
-│  Sentiment   │  Google SSO  │  Content moderation        │
-│  Grammar     │              │                            │
-└──────────────┴──────────┬───┴────────────────────────────┘
-                          │  Mongoose ODM
-┌─────────────────────────▼────────────────────────────────┐
-│                    DATA LAYER                             │
-│  MongoDB Atlas · 7 Collections                           │
-│  Users · Rooms · Messages · Conversations                │
-│  RefreshTokens · Polls · Reports                         │
-└──────────────────────────────────────────────────────────┘
-```
+- `backend/index.js` boots the Express API, Socket.IO server, Passport config, and MongoDB connection.
+- The data layer uses MongoDB with Mongoose models from `backend/models`.
+- The old TypeScript + Prisma backend path is not part of the active runtime and should not be used for local development.
 
-1.  **Client Layer (Frontend)**: React 18 single-page application built with Vite and TypeScript. It manages global state via Zustand, handles routing, and provides a highly interactive and aesthetic user interface using TailwindCSS and Framer Motion.
-2.  **Server Layer (Backend)**: Express.js REST API coupled with a Socket.IO WebSocket server. It handles authentication, business logic, API routing, and AI integration with Google Gemini. Comprises 15 route modules covering everything from core chat to admin and analytics.
-3.  **Data Layer (Database)**: MongoDB Atlas cluster, interacted with via Mongoose ODM. It provides document-oriented persistent storage across 7 collections for users, rooms, messages, conversations, tokens, polls, and reports.
-4.  **AI Layer**: Google Gemini 1.5 Flash API for advanced reasoning, content generation, smart reply suggestions, sentiment analysis, and grammar checking within solo and group contexts.
-5.  **Auth Layer**: Dual-strategy authentication (local + Google OAuth) converging into JWT access/refresh token pattern with Passport.js.
-6.  **Moderation Layer**: User and content moderation through reporting, blocking, admin review, and role-based access control within rooms.
+For local work, think in terms of:
 
-## Frontend Architecture
+1. `frontend/` for the React app
+2. `backend/` for the API and socket server
+3. MongoDB for persistence
 
-The frontend is structured into several core directories to enforce separation of concerns:
+## High-Level Flow
 
--   `src/pages/` — 13 top-level route pages:
-    - `Landing` — Marketing page with feature showcase
-    - `Login`, `Register` — Authentication forms
-    - `GoogleCallback` — OAuth redirect handler
-    - `Dashboard` — Personal stats, activity feed, recent rooms
-    - `SoloChat` — Private 1-on-1 AI conversations
-    - `Rooms` — Room listing, creation, and discovery
-    - `GroupChat` — Real-time group messaging with AI, polls, pins
-    - `Profile` — User profile editor (display name, bio, avatar)
-    - `Settings` — Theme, notifications, AI feature toggles
-    - `SearchPage` — Full-text message search with filters
-    - `ExportChat` — Data export interface
-    - `AdminDashboard` — Platform admin panel
+### Frontend
 
--   `src/components/` — 19 reusable UI components including `MessageBubble`, `PollComponents`, `SmartReplies`, `SentimentBadge`, `GrammarSuggestion`, `PinnedMessages`, `MemberManagement`, `ReportModal`, `ReadReceipt`, `TypingIndicator`, `AnalyticsCharts`, and more.
+- React + TypeScript + Vite
+- Zustand stores for auth, room, and chat state
+- Axios for REST calls
+- Socket.IO client for room presence and live message updates
 
--   `src/store/` — Zustand stores for managing global state slices (`authStore`, `chatStore`, `roomStore`).
--   `src/hooks/` — Custom React hooks encapsulating complex logic, particularly around real-time connections (`useSocket`) and chat interactions (`useChat`).
--   `src/api/` — Axios instances and API service modules for interacting with the backend REST endpoints.
--   `src/context/` — React context providers, such as the Theme context for dark mode toggling.
+Important frontend files:
 
-## Backend Architecture
+- `frontend/src/api` contains REST wrappers
+- `frontend/src/hooks/useSocket.ts` owns socket connection, ack handling, and reconnect after token refresh
+- `frontend/src/pages/GroupChat.tsx` handles room chat, replies, reactions, file sending, edit/delete, and AI requests
+- `frontend/src/pages/SearchPage.tsx` combines room-message search and solo conversation search
 
-The backend utilizes an MVC-like structure tailored for real-time and API-driven applications:
+### Backend
 
--   `config/` — Configuration files for database connections (`db.js`) and third-party integrations (`passport.js` for Google OAuth).
--   `models/` — 7 Mongoose schemas: `User`, `Room`, `Message`, `Conversation`, `RefreshToken`, `Poll`, `Report`.
--   `middleware/` — Express middleware for JWT authentication (`auth.js`) and Socket.IO authorization (`socketAuth.js`).
--   `routes/` — 15 Express router modules:
+- Express REST API
+- Socket.IO for real-time room chat
+- Passport Google OAuth
+- JWT access and refresh token flow
+- Mongoose models for users, rooms, messages, conversations, polls, reports, and refresh tokens
 
-    | Module | Mount Path | Purpose |
-    |--------|-----------|---------|
-    | `auth.js` | `/api/auth` | Registration, login, token refresh, logout, Google OAuth |
-    | `chat.js` | `/api/chat` | Solo AI conversations |
-    | `conversations.js` | `/api/conversations` | Conversation CRUD |
-    | `rooms.js` | `/api/rooms` | Room CRUD + join/leave |
-    | `dashboard.js` | `/api/dashboard` | Aggregated user stats & activity feed |
-    | `users.js` | `/api/users` | Profile management |
-    | `search.js` | `/api/search` | Full-text message search |
-    | `ai.js` | `/api/ai` | Smart replies, sentiment analysis, grammar check |
-    | `settings.js` | `/api/settings` | User preferences (theme, notifications, AI toggles) |
-    | `polls.js` | `/api/polls` | Poll CRUD + voting |
-    | `groups.js` | `/api/groups` | Member management & role assignment |
-    | `moderation.js` | `/api/moderation` | Reporting & user blocking |
-    | `export.js` | `/api/export` | Data export (conversations, rooms) |
-    | `admin.js` | `/api/admin` | Platform stats, report review, user listing |
-    | `analytics.js` | `/api/analytics` | Message trends, active users, top rooms |
+Important backend files:
 
--   `services/` — Encapsulated third-party service interactions (`gemini.js`).
--   `index.js` — Application entry point: Express, Socket.IO, and all WebSocket event handlers.
+- `backend/index.js` application entry point
+- `backend/routes/auth.js` local auth, refresh, password reset, and Google code exchange
+- `backend/routes/rooms.js` room listing, join/leave, room detail, and pinned messages
+- `backend/routes/groups.js` room member management
+- `backend/routes/polls.js` poll create/list/vote/close
+- `backend/routes/search.js` room and solo-chat search
+- `backend/routes/uploads.js` authenticated file upload and file serving
 
-## Authentication Flow
+## Main Data Models
 
-ChatSphere employs a robust dual-strategy authentication system:
+### User
 
-1.  **Email & Password**: Traditional registration and login using bcrypt for password hashing (12 salt rounds).
-2.  **Google OAuth2**: One-click social login using Passport.js.
+Stores:
 
-Both strategies converge into a **JWT (JSON Web Token)** pattern:
--   **Access Token**: Short-lived token attached to every authorized request (via Authorization header) and Socket.IO connection.
--   **Refresh Token**: Long-lived token stored securely, used to obtain new Access Tokens without re-authentication. Auto-expires based on MongoDB TTL index.
+- account info
+- auth provider
+- online status
+- blocked users
+- settings
+- admin flag
 
-## Real-time Architecture
+### Room
 
-Socket.IO handles all real-time features with server-side state tracking:
+Stores:
 
--   **Room Presence**: In-memory `Map<roomId, Map<socketId, user>>` tracks who is in each room.
--   **Global Online Status**: `Map<userId, socketInfo>` tracks all connected users; status is also persisted to the User model in MongoDB.
--   **Typing Indicators**: `Map<roomId, Map<userId, timeout>>` tracks typing state with 3-second auto-expire.
--   **Message Lifecycle**: Messages flow through `sent → delivered → read` status with real-time broadcast of state changes.
--   **AI Integration**: AI requests emit `ai_thinking` (loading state) → process via Gemini → emit `ai_response` with the result.
+- room metadata
+- creator
+- member list with roles
+- max user capacity
+- pinned message ids
+- AI history used for group Gemini prompts
 
-## Admin & Moderation Architecture
+### Message
 
-Role-based access control operates at two levels:
+Stores:
 
-1.  **Platform-level**: `User.isAdmin` flag gates access to `/api/admin` routes via `adminCheck` middleware.
-2.  **Room-level**: `Room.members[].role` (admin/moderator/member) controls role assignment, member kicking, and moderation actions. Room creators have ultimate authority.
+- room message content
+- reactions
+- reply preview metadata
+- status (`sent`, `delivered`, `read`)
+- pin state
+- soft-delete state
+- edit metadata and edit history
+- optional uploaded file metadata
 
-Reports follow a lifecycle: `pending → reviewed | action_taken | dismissed`, tracked in the `Report` model and managed through the admin panel.
+### Conversation
+
+Stores solo AI chat history per user.
+
+### Poll
+
+Stores:
+
+- room id
+- question
+- options
+- vote lists
+- close state
+- expiry time
+
+### Report
+
+Stores moderation reports for users or messages, with status and review notes.
+
+## Auth And Session Flow
+
+### Local Login
+
+1. Client calls `POST /api/auth/login`
+2. Server returns access token, refresh token, and safe user object
+3. Frontend stores tokens and uses the access token for REST and sockets
+4. Axios refreshes tokens through `POST /api/auth/refresh` when needed
+5. `useSocket` reconnects with the rotated token after refresh
+
+### Google Login
+
+The Google flow no longer puts JWT tokens in the browser redirect URL.
+
+1. Browser starts at `GET /api/auth/google`
+2. Google returns to `GET /api/auth/google/callback`
+3. Server creates a short-lived one-time login code
+4. Browser is redirected to the frontend callback route with `?code=...`
+5. Frontend exchanges that code through `POST /api/auth/google/exchange`
+6. Server returns access and refresh tokens in JSON
+
+This keeps real tokens out of the callback query string.
+
+## Real-Time Rules
+
+Socket events are protected by JWT auth through `backend/middleware/socketAuth.js`.
+
+Important server-side rules:
+
+- room membership is checked before room-scoped actions run
+- `join_room` only works for actual room members
+- send, reply, react, pin, unpin, and read operations return ack payloads
+- socket flood control limits bursts of room actions
+- delivered status only moves forward when another room member is online
+- read status is only applied to valid messages in the current room
+
+The socket server also keeps lightweight in-memory maps for:
+
+- room presence
+- online users
+- typing state
+- flood-control counters
+
+## Files And Uploads
+
+Uploads are handled by Multer in `backend/middleware/upload.js`.
+
+Current limits:
+
+- max file size: 5 MB
+- allowed mime types:
+  - `image/jpeg`
+  - `image/png`
+  - `image/gif`
+  - `image/webp`
+  - `application/pdf`
+  - `text/plain`
+
+Uploaded files are stored in `backend/uploads` and served through `/api/uploads/:filename`.
+
+## Search Design
+
+Two search paths exist and are both used by the frontend:
+
+- `GET /api/search/messages` for room messages
+- `GET /api/search/conversations` for solo AI conversations
+
+Room-message search is restricted to rooms the current user belongs to and supports filters like:
+
+- room id
+- sender id
+- date range
+- AI-only
+- pinned-only
+- attachment-only
+- file type
+
+## Settings And Feature Toggles
+
+User settings live on the `User` document and are read or updated through `GET/PUT /api/settings`.
+
+Current settings groups:
+
+- theme
+- accent color
+- notification preferences
+- AI feature toggles
+
+The frontend should treat settings as user preferences, while backend permission checks remain authoritative.
+
+## Local Development Layout
+
+Run the project in two terminals:
+
+1. `cd backend && npm run dev`
+2. `cd frontend && npm run dev`
+
+Backend default URL:
+
+- `http://localhost:3000`
+
+Frontend default URL:
+
+- `http://localhost:5173`
+
+The frontend talks to the backend through `/api` and the Socket.IO server on the same backend origin.

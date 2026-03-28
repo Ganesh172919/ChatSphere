@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
-import { useAuthStore } from '../store/authStore';
 import toast from 'react-hot-toast';
+import { exchangeGoogleCode } from '../api/auth';
+import { useAuthStore } from '../store/authStore';
 
 export default function GoogleCallback() {
   const navigate = useNavigate();
@@ -11,43 +12,48 @@ export default function GoogleCallback() {
   const { login } = useAuthStore();
 
   useEffect(() => {
-    const accessToken = searchParams.get('accessToken');
-    const refreshToken = searchParams.get('refreshToken');
-    const userId = searchParams.get('userId');
-    const username = searchParams.get('username');
-    const email = searchParams.get('email');
-    const displayName = searchParams.get('displayName');
-    const avatar = searchParams.get('avatar');
-    const authProvider = searchParams.get('authProvider');
+    let isActive = true;
+    const code = searchParams.get('code');
     const error = searchParams.get('error');
 
     if (error) {
       toast.error('Google sign-in failed. Please try again.');
-      navigate('/login');
+      navigate('/login', { replace: true });
       return;
     }
 
-    if (accessToken && refreshToken && userId && username && email) {
-      login(
-        {
-          id: userId,
-          username,
-          email,
-          displayName: displayName || username,
-          avatar: avatar || '',
-          authProvider: authProvider || 'google',
-          createdAt: new Date().toISOString(),
-        },
-        accessToken,
-        refreshToken
-      );
-      toast.success(`Welcome, ${displayName || username}! 🎉`);
-      navigate('/dashboard');
-    } else {
-      toast.error('Authentication failed — missing credentials');
-      navigate('/login');
+    if (!code) {
+      toast.error('Authentication failed because the Google login code is missing.');
+      navigate('/login', { replace: true });
+      return;
     }
-  }, [searchParams, login, navigate]);
+
+    const completeGoogleLogin = async () => {
+      try {
+        const data = await exchangeGoogleCode(code);
+        if (!isActive) {
+          return;
+        }
+
+        login(data.user, data.accessToken, data.refreshToken);
+        toast.success(`Welcome, ${data.user.displayName || data.user.username}!`);
+        navigate('/dashboard', { replace: true });
+      } catch {
+        if (!isActive) {
+          return;
+        }
+
+        toast.error('Google sign-in could not be completed.');
+        navigate('/login?error=google_exchange_failed', { replace: true });
+      }
+    };
+
+    completeGoogleLogin();
+
+    return () => {
+      isActive = false;
+    };
+  }, [login, navigate, searchParams]);
 
   return (
     <div className="min-h-screen bg-navy-900 flex items-center justify-center">
@@ -60,7 +66,7 @@ export default function GoogleCallback() {
           <Sparkles size={28} className="text-white" />
         </div>
         <h2 className="font-display text-xl text-white mb-2">Signing you in...</h2>
-        <p className="text-gray-500 text-sm">Connecting with Google</p>
+        <p className="text-gray-500 text-sm">Completing Google sign-in securely</p>
       </motion.div>
     </div>
   );

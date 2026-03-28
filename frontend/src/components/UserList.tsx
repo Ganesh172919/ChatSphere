@@ -49,7 +49,9 @@ export default function UserList({ users, creatorId }: Props) {
             </div>
             <span className="text-sm text-gray-300 font-medium truncate">{user.username}</span>
             {user.id === creatorId && (
-              <Crown size={14} className="text-yellow-500 flex-shrink-0" title="Room Creator" />
+              <span title="Room creator" className="flex-shrink-0">
+                <Crown size={14} className="text-yellow-500" />
+              </span>
             )}
           </motion.div>
         ))}

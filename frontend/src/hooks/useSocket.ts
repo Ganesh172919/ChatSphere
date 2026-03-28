@@ -1,13 +1,20 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { refreshAccessToken } from '../api/auth';
 import { useAuthStore } from '../store/authStore';
+
+type SocketAck = {
+  success: boolean;
+  error?: string;
+  [key: string]: unknown;
+};
 
 let globalSocket: Socket | null = null;
 
 export function useSocket() {
   const socketRef = useRef<Socket | null>(null);
-  const { accessToken, isAuthenticated } = useAuthStore();
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { accessToken, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
     if (!isAuthenticated || !accessToken) {
@@ -15,18 +22,20 @@ export function useSocket() {
         globalSocket.disconnect();
         globalSocket = null;
       }
+      socketRef.current = null;
       return;
     }
 
-    if (globalSocket?.connected) {
+    if (globalSocket) {
+      const currentToken = (globalSocket.auth as { token?: string } | undefined)?.token;
+      if (currentToken !== accessToken) {
+        globalSocket.auth = { token: accessToken };
+        globalSocket.disconnect();
+        globalSocket.connect();
+      }
+
       socketRef.current = globalSocket;
       return;
-    }
-
-    // Disconnect stale socket if exists
-    if (globalSocket && !globalSocket.connected) {
-      globalSocket.disconnect();
-      globalSocket = null;
     }
 
     const socket = io('/', {
@@ -45,31 +54,20 @@ export function useSocket() {
     socket.on('connect_error', async (err) => {
       console.error('Socket connection error:', err.message);
 
-      // If auth error, try refreshing the token
-      if (err.message?.includes('Authentication') || err.message?.includes('jwt')) {
-        try {
-          const refreshToken = localStorage.getItem('refreshToken');
-          if (refreshToken) {
-            const response = await fetch('/api/auth/refresh', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ refreshToken }),
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              useAuthStore.getState().updateTokens(data.accessToken, data.refreshToken);
-
-              // Reconnect with new token
-              socket.auth = { token: data.accessToken };
-              socket.connect();
-            } else {
-              useAuthStore.getState().logout();
-            }
-          }
-        } catch (refreshErr) {
-          console.error('Socket token refresh failed:', refreshErr);
+      try {
+        const refreshToken = localStorage.getItem('refreshToken');
+        if (!refreshToken) {
+          useAuthStore.getState().logout();
+          return;
         }
+
+        const tokens = await refreshAccessToken(refreshToken);
+        useAuthStore.getState().updateTokens(tokens.accessToken, tokens.refreshToken);
+        socket.auth = { token: tokens.accessToken };
+        socket.connect();
+      } catch (refreshError) {
+        console.error('Socket token refresh failed:', refreshError);
+        useAuthStore.getState().logout();
       }
     });
 
@@ -77,21 +75,34 @@ export function useSocket() {
     socketRef.current = socket;
 
     return () => {
-      // Don't disconnect on component unmount — keep alive
+      socketRef.current = globalSocket;
     };
-  }, [isAuthenticated, accessToken]);
+  }, [accessToken, isAuthenticated]);
+
+  const emitWithAck = useCallback(<T extends SocketAck>(event: string, ...args: unknown[]) => {
+    const socket = socketRef.current;
+    if (!socket) {
+      return Promise.resolve({ success: false, error: 'Socket is not connected' } as T);
+    }
+
+    return new Promise<T>((resolve) => {
+      socket.emit(event, ...args, (response: T | undefined) => {
+        resolve(response || ({ success: false, error: 'No response from socket server' } as T));
+      });
+    });
+  }, []);
 
   const joinRoom = useCallback((roomId: string) => {
-    socketRef.current?.emit('join_room', roomId);
-  }, []);
+    return emitWithAck('join_room', roomId);
+  }, [emitWithAck]);
 
   const leaveRoom = useCallback((roomId: string) => {
-    socketRef.current?.emit('leave_room', roomId);
-  }, []);
+    return emitWithAck('leave_room', roomId);
+  }, [emitWithAck]);
 
   const sendMessage = useCallback((roomId: string, content: string) => {
-    socketRef.current?.emit('send_message', { roomId, content });
-  }, []);
+    return emitWithAck('send_message', { roomId, content });
+  }, [emitWithAck]);
 
   const sendFileMessage = useCallback((roomId: string, content: string, fileData: {
     fileUrl: string;
@@ -99,74 +110,76 @@ export function useSocket() {
     fileType: string;
     fileSize: number;
   }) => {
-    socketRef.current?.emit('send_message', {
+    return emitWithAck('send_message', {
       roomId,
       content,
       ...fileData,
     });
-  }, []);
+  }, [emitWithAck]);
 
   const replyMessage = useCallback((roomId: string, content: string, replyToId: string) => {
-    socketRef.current?.emit('reply_message', { roomId, content, replyToId });
-  }, []);
+    return emitWithAck('reply_message', { roomId, content, replyToId });
+  }, [emitWithAck]);
 
   const addReaction = useCallback((roomId: string, messageId: string, emoji: string) => {
-    socketRef.current?.emit('add_reaction', { roomId, messageId, emoji });
-  }, []);
+    return emitWithAck('add_reaction', { roomId, messageId, emoji });
+  }, [emitWithAck]);
 
   const triggerAi = useCallback((roomId: string, prompt: string) => {
-    socketRef.current?.emit('trigger_ai', { roomId, prompt });
-  }, []);
+    return emitWithAck('trigger_ai', { roomId, prompt });
+  }, [emitWithAck]);
 
   const editMessage = useCallback((roomId: string, messageId: string, newContent: string) => {
-    socketRef.current?.emit('edit_message', { roomId, messageId, newContent });
-  }, []);
+    return emitWithAck('edit_message', { roomId, messageId, newContent });
+  }, [emitWithAck]);
 
   const deleteMessage = useCallback((roomId: string, messageId: string) => {
-    socketRef.current?.emit('delete_message', { roomId, messageId });
-  }, []);
+    return emitWithAck('delete_message', { roomId, messageId });
+  }, [emitWithAck]);
 
-  // Typing indicators with debounce
   const emitTyping = useCallback((roomId: string) => {
-    socketRef.current?.emit('typing_start', { roomId });
+    void emitWithAck('typing_start', { roomId });
 
-    // Auto-stop after 2 seconds of no typing
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
+
     typingTimeoutRef.current = setTimeout(() => {
-      socketRef.current?.emit('typing_stop', { roomId });
+      void emitWithAck('typing_stop', { roomId });
     }, 2000);
-  }, []);
+  }, [emitWithAck]);
 
   const stopTyping = useCallback((roomId: string) => {
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
     }
-    socketRef.current?.emit('typing_stop', { roomId });
-  }, []);
 
-  // Read receipts
+    return emitWithAck('typing_stop', { roomId });
+  }, [emitWithAck]);
+
   const markAsRead = useCallback((roomId: string, messageIds: string[]) => {
-    if (messageIds.length === 0) return;
-    socketRef.current?.emit('mark_read', { roomId, messageIds });
-  }, []);
+    if (messageIds.length === 0) {
+      return Promise.resolve({ success: true } as SocketAck);
+    }
 
-  // Pin/unpin
+    return emitWithAck('mark_read', { roomId, messageIds });
+  }, [emitWithAck]);
+
   const pinMessage = useCallback((roomId: string, messageId: string) => {
-    socketRef.current?.emit('pin_message', { roomId, messageId });
-  }, []);
+    return emitWithAck('pin_message', { roomId, messageId });
+  }, [emitWithAck]);
 
   const unpinMessage = useCallback((roomId: string, messageId: string) => {
-    socketRef.current?.emit('unpin_message', { roomId, messageId });
-  }, []);
+    return emitWithAck('unpin_message', { roomId, messageId });
+  }, [emitWithAck]);
 
   const disconnect = useCallback(() => {
     if (globalSocket) {
       globalSocket.disconnect();
       globalSocket = null;
     }
+    socketRef.current = null;
   }, []);
 
   return {

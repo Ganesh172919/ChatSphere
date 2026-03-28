@@ -10,6 +10,8 @@ export interface Room {
   creatorId: string;
   createdAt: string;
   messageCount: number;
+  isMember?: boolean;
+  currentUserRole?: 'creator' | 'admin' | 'moderator' | 'member' | null;
 }
 
 export interface RoomDetail extends Room {
@@ -49,6 +51,11 @@ export async function createRoom(name: string, description: string, tags: string
 
 export async function fetchRoomById(id: string): Promise<RoomDetail> {
   const { data } = await api.get<RoomDetail>(`/rooms/${id}`);
+  return data;
+}
+
+export async function joinRoomById(id: string): Promise<Room> {
+  const { data } = await api.post<Room>(`/rooms/${id}/join`);
   return data;
 }
 

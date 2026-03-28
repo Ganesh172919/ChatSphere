@@ -11,6 +11,7 @@ export interface SearchResult {
   isPinned?: boolean;
   fileUrl?: string | null;
   fileName?: string | null;
+  fileType?: string | null;
   timestamp: string;
   score: number;
 }
@@ -31,6 +32,7 @@ export interface SearchParams {
   isAI?: string;
   isPinned?: string;
   hasFile?: string;
+  fileType?: string;
   page?: number;
   limit?: number;
 }
