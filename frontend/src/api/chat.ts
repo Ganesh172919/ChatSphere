@@ -1,4 +1,5 @@
 import api from './axios';
+import type { ConversationInsight, MemoryReference } from '../types/chat';
 
 interface ChatMessage {
   role: string;
@@ -10,6 +11,8 @@ interface ChatResponse {
   role: string;
   content: string;
   timestamp: string;
+  memoryRefs?: MemoryReference[];
+  insight?: ConversationInsight | null;
 }
 
 export async function sendChatMessage(

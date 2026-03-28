@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ReadReceipt from './ReadReceipt';
+import SentimentBadge from './SentimentBadge';
+import type { MemoryReference } from '../types/chat';
 
 interface Reaction {
   emoji: string;
@@ -50,6 +52,8 @@ interface Props {
   canEdit?: boolean;
   canDelete?: boolean;
   index?: number;
+  memoryRefs?: MemoryReference[];
+  sentiment?: { sentiment: string; emoji: string; confidence: number } | null;
 }
 
 const REACTION_EMOJIS = [
@@ -127,6 +131,8 @@ export default function MessageBubble({
   canEdit = false,
   canDelete = false,
   index = 0,
+  memoryRefs = [],
+  sentiment = null,
 }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -241,6 +247,7 @@ export default function MessageBubble({
                 <Pin size={10} /> Pinned
               </span>
             )}
+            {sentiment ? <SentimentBadge sentiment={sentiment.sentiment} emoji={sentiment.emoji} confidence={sentiment.confidence} /> : null}
             {isEdited && (
               <span className="text-[10px] text-gray-500">Edited</span>
             )}
@@ -316,6 +323,24 @@ export default function MessageBubble({
               {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               {isExpanded ? 'Show less' : 'Show full response'}
             </button>
+          )}
+
+          {memoryRefs.length > 0 && (
+            <div className="mt-3 rounded-xl border border-neon-blue/20 bg-neon-blue/5 p-3">
+              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-neon-blue">
+                Memory used
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {memoryRefs.map((memory) => (
+                  <span
+                    key={memory.id}
+                    className="rounded-full border border-neon-blue/20 bg-navy-900/40 px-2.5 py-1 text-[11px] text-gray-200"
+                  >
+                    {memory.summary}
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 

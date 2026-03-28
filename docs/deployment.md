@@ -8,6 +8,7 @@ This guide covers deploying ChatSphere to production environments.
 - A Google Cloud project with OAuth credentials configured for production URLs
 - A Gemini API key
 - Hosting accounts for backend (Render, Railway, or similar) and frontend (Vercel, Netlify, or similar)
+- A plan for routing frontend requests to the backend (see **Frontend ↔ Backend Routing** below)
 
 ---
 
@@ -59,7 +60,26 @@ GOOGLE_CALLBACK_URL=https://your-backend-url.com/api/auth/google/callback
 CLIENT_URL=https://your-frontend-url.com
 ```
 
-> **Important**: Generate cryptographically secure random strings for JWT secrets. Use `openssl rand -base64 64` or a password generator.
+> **Important**: Generate cryptographically secure random strings for JWT secrets.
+>
+> - `openssl rand -base64 64`
+> - Node.js: `node -e "console.log(require('crypto').randomBytes(64).toString('base64'))"`
+
+---
+
+## Frontend ↔ Backend Routing (Important)
+
+The frontend is configured to call the backend using **relative** URLs:
+
+- REST API: `/api`
+- Socket.IO: `/socket.io` (same origin as the frontend)
+
+In local development, Vite proxies both to `http://localhost:3000` (see `frontend/vite.config.ts`).
+
+In production you have two common options:
+
+1. **Same-origin (recommended, no frontend code changes):** serve the frontend and proxy `/api` and `/socket.io` to your backend (Nginx/Caddy/Cloudflare/etc).
+2. **Separate origins:** if your frontend and backend are on different domains, update the frontend to point at the backend origin (axios `baseURL` and the Socket.IO `io(...)` URL), then ensure `CLIENT_URL` matches your frontend URL for CORS.
 
 ---
 
@@ -74,11 +94,7 @@ CLIENT_URL=https://your-frontend-url.com
    - **Framework Preset**: Vite
    - **Build Command**: `npm run build`
    - **Output Directory**: `dist`
-4. Add environment variables if needed:
-   ```env
-   VITE_API_URL=https://your-backend-url.com
-   ```
-5. Deploy
+4. Deploy
 
 ### Option B: Netlify
 
@@ -93,6 +109,7 @@ CLIENT_URL=https://your-frontend-url.com
    /*    /index.html   200
    ```
    *(This handles client-side routing)*
+5. Ensure your production setup routes `/api` and `/socket.io` to the backend (see **Frontend ↔ Backend Routing** above)
 
 ---
 

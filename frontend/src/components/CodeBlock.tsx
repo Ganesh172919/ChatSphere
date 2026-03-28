@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface Props {
   language: string;
@@ -17,7 +15,6 @@ export default function CodeBlock({ language, children }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
       const textarea = document.createElement('textarea');
       textarea.value = children;
       document.body.appendChild(textarea);
@@ -30,14 +27,14 @@ export default function CodeBlock({ language, children }: Props) {
   };
 
   return (
-    <div className="relative group my-3 rounded-xl overflow-hidden border border-navy-600/50">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-navy-800 border-b border-navy-600/50">
-        <span className="text-xs text-gray-400 font-mono uppercase">{language || 'code'}</span>
+    <div className="relative my-3 overflow-hidden rounded-xl border border-navy-600/50">
+      <div className="flex items-center justify-between border-b border-navy-600/50 bg-navy-800 px-4 py-2">
+        <span className="font-mono text-xs uppercase text-gray-400">{language || 'code'}</span>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-gray-400 transition-all hover:bg-navy-700 hover:text-white"
           aria-label="Copy code"
+          type="button"
         >
           {copied ? (
             <>
@@ -52,21 +49,9 @@ export default function CodeBlock({ language, children }: Props) {
           )}
         </button>
       </div>
-      {/* Code */}
-      <SyntaxHighlighter
-        language={language || 'text'}
-        style={oneDark}
-        customStyle={{
-          margin: 0,
-          padding: '1rem',
-          background: '#0D0F1A',
-          fontSize: '0.85rem',
-          lineHeight: '1.6',
-        }}
-        showLineNumbers={children.split('\n').length > 5}
-      >
-        {children}
-      </SyntaxHighlighter>
+      <pre className="overflow-x-auto bg-[#0D0F1A] p-4 text-sm leading-6 text-gray-200">
+        <code>{children}</code>
+      </pre>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import api from './axios';
 
-export async function exportConversations(): Promise<Blob> {
+export async function exportConversations(format: 'normalized' | 'markdown' | 'adapter' = 'normalized'): Promise<Blob> {
   const { data } = await api.get('/export/conversations', {
+    params: { format },
     responseType: 'blob',
   });
   return data;

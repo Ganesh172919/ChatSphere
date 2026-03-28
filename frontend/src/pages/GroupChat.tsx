@@ -8,14 +8,20 @@ import TypingIndicator from '../components/TypingIndicator';
 import UserList from '../components/UserList';
 import PinnedMessages from '../components/PinnedMessages';
 import SmartReplies from '../components/SmartReplies';
-import { CreatePollModal } from '../components/PollComponents';
+import ConversationInsightsPanel from '../components/ConversationInsightsPanel';
+import { CreatePollModal, PollCard } from '../components/PollComponents';
 import MemberManagement from '../components/MemberManagement';
 import GrammarSuggestion from '../components/GrammarSuggestion';
+import { analyzeSentiment } from '../api/ai';
+import { fetchSettings } from '../api/settings';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
 import { useAuthStore } from '../store/authStore';
-import { fetchRoomById, joinRoomById, uploadFile } from '../api/rooms';
+import { fetchRoomById, fetchRoomInsight, joinRoomById, runRoomAction, uploadFile } from '../api/rooms';
 import type { GroupMessage } from '../api/rooms';
+import type { Poll } from '../api/polls';
+import type { ConversationInsight } from '../types/chat';
+import { closePoll, fetchPolls, votePoll } from '../api/polls';
 import toast from 'react-hot-toast';
 
 interface TypingUser {
@@ -39,6 +45,11 @@ export default function GroupChat() {
   const [showMemberPanel, setShowMemberPanel] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [polls, setPolls] = useState<Poll[]>([]);
+  const [roomInsight, setRoomInsight] = useState<ConversationInsight | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [sentimentEnabled, setSentimentEnabled] = useState(false);
+  const [messageSentiments, setMessageSentiments] = useState<Record<string, { sentiment: string; emoji: string; confidence: number }>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -51,6 +62,28 @@ export default function GroupChat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
+  const loadRoomInsight = useCallback(async () => {
+    if (!roomId) return;
+
+    try {
+      const insight = await fetchRoomInsight(roomId);
+      setRoomInsight(insight);
+    } catch {
+      setRoomInsight(null);
+    }
+  }, [roomId]);
+
+  const loadPolls = useCallback(async () => {
+    if (!roomId) return;
+
+    try {
+      const nextPolls = await fetchPolls(roomId);
+      setPolls(nextPolls);
+    } catch {
+      setPolls([]);
+    }
+  }, [roomId]);
+
   // Load room data
   useEffect(() => {
     if (!roomId) return;
@@ -60,6 +93,7 @@ export default function GroupChat() {
         await joinRoomById(roomId);
         const room = await fetchRoomById(roomId);
         setCurrentRoom(room);
+        setRoomInsight(room.insight || null);
       } catch (err: unknown) {
         const error = err as { response?: { data?: { error?: string } } };
         toast.error(error.response?.data?.error || 'Unable to open this room');
@@ -72,6 +106,68 @@ export default function GroupChat() {
       clearCurrentRoom();
     };
   }, [roomId, setCurrentRoom, clearCurrentRoom, navigate]);
+
+  useEffect(() => {
+    void loadPolls();
+    void loadRoomInsight();
+  }, [loadPolls, loadRoomInsight]);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await fetchSettings();
+        setSentimentEnabled(settings.aiFeatures.sentimentAnalysis);
+      } catch {
+        setSentimentEnabled(false);
+      }
+    };
+
+    void loadSettings();
+  }, []);
+
+  useEffect(() => {
+    if (!sentimentEnabled || !currentRoom) {
+      return;
+    }
+
+    const candidates = currentRoom.messages
+      .filter((message) => !message.isAI && message.userId !== user?.id && !messageSentiments[message.id] && message.content.trim().length > 0)
+      .slice(-6);
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSentiments = async () => {
+      for (const message of candidates) {
+        try {
+          const sentiment = await analyzeSentiment(message.content);
+          if (cancelled) {
+            return;
+          }
+
+          setMessageSentiments((current) => ({
+            ...current,
+            [message.id]: {
+              sentiment: sentiment.sentiment,
+              emoji: sentiment.emoji,
+              confidence: sentiment.confidence,
+            },
+          }));
+        } catch {
+          return;
+        }
+      }
+    };
+
+    void loadSentiments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRoom, messageSentiments, sentimentEnabled, user?.id]);
 
   // Join room via socket
   useEffect(() => {
@@ -94,10 +190,12 @@ export default function GroupChat() {
 
     const handleMessage = (message: GroupMessage) => {
       addMessageToCurrentRoom(message);
+      void loadRoomInsight();
     };
 
     const handleAiResponse = (message: GroupMessage) => {
       addMessageToCurrentRoom(message);
+      void loadRoomInsight();
     };
 
     const handleAiThinking = ({ status }: { status: boolean }) => {
@@ -186,7 +284,7 @@ export default function GroupChat() {
       socket.off('message_pinned', handleMessagePinned);
       socket.off('message_unpinned', handleMessageUnpinned);
     };
-  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, setOnlineUsers, setAiThinking]);
+  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, setOnlineUsers, setAiThinking, loadRoomInsight]);
 
   // Auto-scroll
   useEffect(() => {
@@ -332,6 +430,39 @@ export default function GroupChat() {
     }
   };
 
+  const handlePollVote = async (pollId: string, optionIndex: number) => {
+    try {
+      const updated = await votePoll(pollId, optionIndex);
+      setPolls((current) => current.map((poll) => (poll.id === pollId ? updated : poll)));
+    } catch {
+      toast.error('Failed to update vote');
+    }
+  };
+
+  const handleClosePoll = async (pollId: string) => {
+    try {
+      const updated = await closePoll(pollId);
+      setPolls((current) => current.map((poll) => (poll.id === pollId ? updated : poll)));
+      toast.success('Poll closed');
+    } catch {
+      toast.error('Failed to close poll');
+    }
+  };
+
+  const handleInsightAction = async (action: 'summarize' | 'extract-tasks' | 'extract-decisions') => {
+    if (!roomId || insightLoading) return;
+
+    setInsightLoading(true);
+    try {
+      const result = await runRoomAction(roomId, action);
+      setRoomInsight(result.insight);
+    } catch {
+      toast.error('Failed to refresh room insight');
+    } finally {
+      setInsightLoading(false);
+    }
+  };
+
   if (!currentRoom) {
     return (
       <div className="h-screen flex flex-col bg-navy-900">
@@ -407,6 +538,15 @@ export default function GroupChat() {
             <span>Manage Members</span>
           </button>
 
+          <div className="mx-4 mt-4">
+            <ConversationInsightsPanel
+              heading="Room Insight"
+              insight={roomInsight}
+              loading={insightLoading}
+              onAction={handleInsightAction}
+            />
+          </div>
+
           <div className="flex-1" />
           <div className="p-3 border-t border-navy-700/50">
             <p className="text-[10px] text-gray-600 text-center">
@@ -445,6 +585,19 @@ export default function GroupChat() {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-2 py-4" role="log" aria-live="polite">
             <div className="max-w-3xl mx-auto space-y-1">
+              {polls.length > 0 && (
+                <div className="mb-4 space-y-3">
+                  {polls.map((poll) => (
+                    <PollCard
+                      key={poll.id}
+                      poll={poll}
+                      currentUserId={user?.id || ''}
+                      onVote={handlePollVote}
+                      onClose={handleClosePoll}
+                    />
+                  ))}
+                </div>
+              )}
               {currentRoom.messages.length === 0 && (
                 <div className="text-center py-20">
                   <Hash size={32} className="text-navy-600 mx-auto mb-3" />
@@ -489,6 +642,8 @@ export default function GroupChat() {
                   canEdit={msg.userId === user?.id && !msg.isDeleted}
                   canDelete={(msg.userId === user?.id || canModerateMessages) && !msg.isDeleted}
                   index={i}
+                  memoryRefs={msg.memoryRefs}
+                  sentiment={messageSentiments[msg.id] || null}
                 />
               ))}
               <AnimatePresence>
@@ -636,7 +791,9 @@ export default function GroupChat() {
         {showPollModal && roomId && (
           <CreatePollModal
             roomId={roomId}
-            onCreated={() => toast.success('Poll created!')}
+            onCreated={(poll) => {
+              setPolls((current) => [poll, ...current]);
+            }}
             onClose={() => setShowPollModal(false)}
           />
         )}

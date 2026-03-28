@@ -13,7 +13,8 @@ const authLimiter = rateLimit({
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: (req) =>
+    req.user?.id ? `user:${req.user.id}` : rateLimit.ipKeyGenerator(req.ip),
   message: { error: 'AI request limit reached. Please wait a few minutes.' },
   standardHeaders: true,
   legacyHeaders: false,

@@ -1,43 +1,30 @@
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
+const adminCheck = require('../middleware/admin');
 const User = require('../models/User');
 const Room = require('../models/Room');
 const Message = require('../models/Message');
 const Report = require('../models/Report');
 const { isValidObjectId } = require('../helpers/validate');
+const { listPromptTemplates, upsertPromptTemplate } = require('../services/promptCatalog');
 
 const router = express.Router();
 
-// Simple admin check middleware
-const adminCheck = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.user.id).select('isAdmin').lean();
-    if (!user || !user.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    next();
-  } catch {
-    return res.status(500).json({ error: 'Auth check failed' });
-  }
-};
-
-// GET /api/admin/stats — Global platform stats
+// GET /api/admin/stats - Global platform stats
 router.get('/stats', authMiddleware, adminCheck, async (req, res) => {
   try {
-    const [totalUsers, totalRooms, totalMessages, pendingReports] = await Promise.all([
+    const [totalUsers, totalRooms, totalMessages, pendingReports, onlineUsers, recentUsers] = await Promise.all([
       User.countDocuments(),
       Room.countDocuments(),
       Message.countDocuments(),
       Report.countDocuments({ status: 'pending' }),
+      User.countDocuments({ onlineStatus: 'online' }),
+      User.find()
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('username displayName avatar createdAt')
+        .lean(),
     ]);
-
-    const onlineUsers = await User.countDocuments({ onlineStatus: 'online' });
-
-    const recentUsers = await User.find()
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('username displayName avatar createdAt')
-      .lean();
 
     res.json({
       totalUsers,
@@ -45,12 +32,12 @@ router.get('/stats', authMiddleware, adminCheck, async (req, res) => {
       totalMessages,
       pendingReports,
       onlineUsers,
-      recentUsers: recentUsers.map(u => ({
-        id: u._id.toString(),
-        username: u.username,
-        displayName: u.displayName || u.username,
-        avatar: u.avatar || null,
-        createdAt: u.createdAt,
+      recentUsers: recentUsers.map((user) => ({
+        id: user._id.toString(),
+        username: user.username,
+        displayName: user.displayName || user.username,
+        avatar: user.avatar || null,
+        createdAt: user.createdAt,
       })),
     });
   } catch (err) {
@@ -59,11 +46,11 @@ router.get('/stats', authMiddleware, adminCheck, async (req, res) => {
   }
 });
 
-// GET /api/admin/reports — List reports with pagination and reason filter
+// GET /api/admin/reports - List reports with pagination and reason filter
 router.get('/reports', authMiddleware, adminCheck, async (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(50, parseInt(req.query.limit) || 20);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, parseInt(req.query.limit, 10) || 20);
     const status = req.query.status || 'pending';
     const reason = req.query.reason || null;
 
@@ -87,27 +74,27 @@ router.get('/reports', authMiddleware, adminCheck, async (req, res) => {
     ]);
 
     res.json({
-      reports: reports.map(r => ({
-        id: r._id.toString(),
+      reports: reports.map((report) => ({
+        id: report._id.toString(),
         reporter: {
-          id: r.reporterId?._id?.toString(),
-          username: r.reporterId?.username || 'Unknown',
-          displayName: r.reporterId?.displayName || r.reporterId?.username || 'Unknown',
-          avatar: r.reporterId?.avatar || null,
+          id: report.reporterId?._id?.toString(),
+          username: report.reporterId?.username || 'Unknown',
+          displayName: report.reporterId?.displayName || report.reporterId?.username || 'Unknown',
+          avatar: report.reporterId?.avatar || null,
         },
-        targetType: r.targetType,
-        targetId: r.targetId.toString(),
-        roomId: r.roomId?.toString() || null,
-        reason: r.reason,
-        description: r.description,
-        status: r.status,
-        reviewNote: r.reviewNote || '',
-        reviewedBy: r.reviewedBy ? {
-          id: r.reviewedBy._id?.toString(),
-          username: r.reviewedBy.username,
+        targetType: report.targetType,
+        targetId: report.targetId.toString(),
+        roomId: report.roomId?.toString() || null,
+        reason: report.reason,
+        description: report.description,
+        status: report.status,
+        reviewNote: report.reviewNote || '',
+        reviewedBy: report.reviewedBy ? {
+          id: report.reviewedBy._id?.toString(),
+          username: report.reviewedBy.username,
         } : null,
-        reviewedAt: r.reviewedAt || null,
-        createdAt: r.createdAt,
+        reviewedAt: report.reviewedAt || null,
+        createdAt: report.createdAt,
       })),
       total,
       page,
@@ -119,7 +106,7 @@ router.get('/reports', authMiddleware, adminCheck, async (req, res) => {
   }
 });
 
-// PUT /api/admin/reports/:id — Review/resolve a report
+// PUT /api/admin/reports/:id - Review/resolve a report
 router.put('/reports/:id', authMiddleware, adminCheck, async (req, res) => {
   try {
     const { status, reviewNote } = req.body;
@@ -159,22 +146,22 @@ router.put('/reports/:id', authMiddleware, adminCheck, async (req, res) => {
   }
 });
 
-// GET /api/admin/users — List users with search
+// GET /api/admin/users - List users with search
 router.get('/users', authMiddleware, adminCheck, async (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(50, parseInt(req.query.limit) || 20);
-    const search = req.query.q || '';
-
-    // Escape regex special characters for safety
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, parseInt(req.query.limit, 10) || 20);
+    const search = String(req.query.q || '');
     const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const filter = escapedSearch
-      ? { $or: [
-          { username: { $regex: escapedSearch, $options: 'i' } },
-          { email: { $regex: escapedSearch, $options: 'i' } },
-          { displayName: { $regex: escapedSearch, $options: 'i' } },
-        ]}
+      ? {
+          $or: [
+            { username: { $regex: escapedSearch, $options: 'i' } },
+            { email: { $regex: escapedSearch, $options: 'i' } },
+            { displayName: { $regex: escapedSearch, $options: 'i' } },
+          ],
+        }
       : {};
 
     const [users, total] = await Promise.all([
@@ -188,15 +175,15 @@ router.get('/users', authMiddleware, adminCheck, async (req, res) => {
     ]);
 
     res.json({
-      users: users.map(u => ({
-        id: u._id.toString(),
-        username: u.username,
-        email: u.email,
-        displayName: u.displayName || u.username,
-        avatar: u.avatar || null,
-        onlineStatus: u.onlineStatus,
-        isAdmin: u.isAdmin || false,
-        createdAt: u.createdAt,
+      users: users.map((user) => ({
+        id: user._id.toString(),
+        username: user.username,
+        email: user.email,
+        displayName: user.displayName || user.username,
+        avatar: user.avatar || null,
+        onlineStatus: user.onlineStatus,
+        isAdmin: user.isAdmin || false,
+        createdAt: user.createdAt,
       })),
       total,
       page,
@@ -205,6 +192,39 @@ router.get('/users', authMiddleware, adminCheck, async (req, res) => {
   } catch (err) {
     console.error('List users error:', err);
     res.status(500).json({ error: 'Failed to load users' });
+  }
+});
+
+// GET /api/admin/prompts - List prompt templates
+router.get('/prompts', authMiddleware, adminCheck, async (req, res) => {
+  try {
+    const rows = await listPromptTemplates();
+    res.json(rows);
+  } catch (err) {
+    console.error('List prompts error:', err);
+    res.status(500).json({ error: 'Failed to load prompt templates' });
+  }
+});
+
+// PUT /api/admin/prompts/:key - Update a prompt template
+router.put('/prompts/:key', authMiddleware, adminCheck, async (req, res) => {
+  try {
+    const key = String(req.params.key || '').trim();
+    const content = String(req.body.content || '').trim();
+    if (!key || !content) {
+      return res.status(400).json({ error: 'Prompt key and content are required' });
+    }
+
+    const updated = await upsertPromptTemplate(key, {
+      content,
+      version: req.body.version,
+      description: req.body.description,
+    });
+
+    res.json(updated);
+  } catch (err) {
+    console.error('Update prompt error:', err);
+    res.status(500).json({ error: 'Failed to update prompt template' });
   }
 });
 

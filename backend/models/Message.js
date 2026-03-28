@@ -106,6 +106,11 @@ const messageSchema = new mongoose.Schema({
     type: Number,
     default: null,
   },
+  memoryRefs: [{
+    id: { type: String, required: true },
+    summary: { type: String, required: true },
+    score: { type: Number, default: null },
+  }],
 }, {
   timestamps: true,
 });

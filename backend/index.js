@@ -29,11 +29,11 @@ const exportRoutes = require('./routes/export');
 const adminRoutes = require('./routes/admin');
 const analyticsRoutes = require('./routes/analytics');
 const uploadRoutes = require('./routes/uploads');
+const memoryRoutes = require('./routes/memory');
 
 // Middleware
 const socketAuthMiddleware = require('./middleware/socketAuth');
 const { apiLimiter } = require('./middleware/rateLimit');
-const { ALLOWED_TYPES, MAX_FILE_SIZE } = require('./middleware/upload');
 
 // Models
 const Room = require('./models/Room');
@@ -45,6 +45,10 @@ const { isValidObjectId, findRoomMember, hasRoomRole } = require('./helpers/vali
 
 // Services
 const { sendGroupMessage } = require('./services/gemini');
+const { consumeAiQuota } = require('./services/aiQuota');
+const { getRoomInsight, refreshRoomInsight } = require('./services/conversationInsights');
+const { formatMessage: sharedFormatMessage, validateAttachmentPayload: sharedValidateAttachmentPayload } = require('./services/messageFormatting');
+const { markMemoriesUsed, retrieveRelevantMemories, upsertMemoryEntries } = require('./services/memory');
 
 const app = express();
 const server = http.createServer(app);
@@ -82,6 +86,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/memory', memoryRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -223,10 +228,11 @@ function formatMessage(msg) {
     fileName: msg.fileName || null,
     fileType: msg.fileType || null,
     fileSize: msg.fileSize || null,
+    memoryRefs: msg.memoryRefs || [],
   };
 }
 
-async function loadRoomForMember(roomId, userId, projection = 'members creatorId maxUsers aiHistory') {
+async function loadRoomForMember(roomId, userId, projection = 'members creatorId maxUsers aiHistory name') {
   if (!isValidObjectId(roomId)) {
     return { room: null, error: 'Invalid room ID' };
   }
@@ -244,28 +250,7 @@ async function loadRoomForMember(roomId, userId, projection = 'members creatorId
 }
 
 function validateAttachmentPayload({ fileUrl, fileName, fileType, fileSize }) {
-  const hasAnyFileField = fileUrl || fileName || fileType || fileSize;
-  if (!hasAnyFileField) {
-    return null;
-  }
-
-  if (!fileUrl || !fileName || !fileType || typeof fileSize !== 'number') {
-    return 'Incomplete file attachment data';
-  }
-
-  if (!fileUrl.startsWith('/api/uploads/')) {
-    return 'Invalid file URL';
-  }
-
-  if (!ALLOWED_TYPES[fileType]) {
-    return 'Unsupported file type';
-  }
-
-  if (fileSize <= 0 || fileSize > MAX_FILE_SIZE) {
-    return `Files must be smaller than ${Math.round(MAX_FILE_SIZE / (1024 * 1024))}MB`;
-  }
-
-  return null;
+  return sharedValidateAttachmentPayload({ fileUrl, fileName, fileType, fileSize });
 }
 
 async function hasBlockingRelationship(userId, otherUserId) {
@@ -538,7 +523,26 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
+      if (textContent) {
+        const memoryEntries = await upsertMemoryEntries({
+          userId: socket.user.id,
+          text: textContent,
+          sourceType: 'room',
+          sourceRoomId: roomId,
+          sourceMessageId: msg._id,
+        });
+
+        if (memoryEntries.length > 0) {
+          msg.memoryRefs = memoryEntries.slice(0, 3).map((entry) => ({
+            id: entry._id.toString(),
+            summary: entry.summary,
+          }));
+          await msg.save();
+        }
+      }
+
       await maybeMarkMessageDelivered(msg, roomId);
+      await refreshRoomInsight(roomId);
       const messageData = formatMessage(msg);
       io.to(roomId).emit('receive_message', messageData);
 
@@ -601,7 +605,24 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
+      const memoryEntries = await upsertMemoryEntries({
+        userId: socket.user.id,
+        text: textContent,
+        sourceType: 'room',
+        sourceRoomId: roomId,
+        sourceMessageId: msg._id,
+      });
+
+      if (memoryEntries.length > 0) {
+        msg.memoryRefs = memoryEntries.slice(0, 3).map((entry) => ({
+          id: entry._id.toString(),
+          summary: entry.summary,
+        }));
+        await msg.save();
+      }
+
       await maybeMarkMessageDelivered(msg, roomId);
+      await refreshRoomInsight(roomId);
       const messageData = formatMessage(msg);
       io.to(roomId).emit('receive_message', messageData);
       ack({ success: true, messageId: msg._id.toString(), message: messageData });
@@ -672,11 +693,18 @@ io.on('connection', async (socket) => {
     if (isFlooded(socket, ack)) return;
 
     if (!prompt || prompt.trim().length === 0) return emitSocketError(socket, ack, 'Prompt is required');
+    if (prompt.trim().length > 4000) return emitSocketError(socket, ack, 'Prompt must be under 4000 characters');
 
     io.to(roomId).emit('ai_thinking', { roomId, status: true });
 
     try {
-      const { room, error } = await loadRoomForMember(roomId, socket.user.id);
+      const quota = consumeAiQuota(`user:${socket.user.id}`);
+      if (!quota.allowed) {
+        io.to(roomId).emit('ai_thinking', { roomId, status: false });
+        return emitSocketError(socket, ack, 'AI request limit reached. Please wait a few minutes.');
+      }
+
+      const { room, error } = await loadRoomForMember(roomId, socket.user.id, 'members creatorId maxUsers aiHistory name');
       if (error) {
         io.to(roomId).emit('ai_thinking', { roomId, status: false });
         return emitSocketError(socket, ack, error);
@@ -687,7 +715,27 @@ io.on('connection', async (socket) => {
         return emitSocketError(socket, ack, 'Join the room before using AI');
       }
 
-      const responseText = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username);
+      const [memoryEntries, insight] = await Promise.all([
+        retrieveRelevantMemories({
+          userId: socket.user.id,
+          query: prompt.trim(),
+          limit: 5,
+        }),
+        getRoomInsight(roomId),
+      ]);
+
+      await upsertMemoryEntries({
+        userId: socket.user.id,
+        text: prompt.trim(),
+        sourceType: 'room',
+        sourceRoomId: roomId,
+      });
+
+      const responseText = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username, {
+        memoryEntries,
+        insight,
+        roomName: room.name,
+      });
 
       // Update AI history in room
       room.aiHistory.push({ role: 'user', parts: [{ text: `[${socket.user.username} asks]: ${prompt.trim()}` }] });
@@ -709,8 +757,15 @@ io.on('connection', async (socket) => {
         triggeredBy: socket.user.username,
         status: 'delivered',
         reactions: new Map(),
+        memoryRefs: memoryEntries.slice(0, 5).map((entry) => ({
+          id: entry._id.toString(),
+          summary: entry.summary,
+          score: entry.score,
+        })),
       });
       await aiMsg.save();
+      await markMemoriesUsed(memoryEntries);
+      await refreshRoomInsight(roomId);
 
       io.to(roomId).emit('ai_thinking', { roomId, status: false });
       const aiMessage = formatMessage(aiMsg);
@@ -780,6 +835,7 @@ io.on('connection', async (socket) => {
       msg.isEdited = true;
       msg.editedAt = new Date();
       await msg.save();
+      await refreshRoomInsight(roomId);
 
       io.to(roomId).emit('message_edited', {
         messageId: msg._id.toString(),
@@ -831,6 +887,7 @@ io.on('connection', async (socket) => {
 
       room.pinnedMessages = room.pinnedMessages.filter((id) => id.toString() !== messageId.toString());
       await room.save();
+      await refreshRoomInsight(roomId);
 
       io.to(roomId).emit('message_deleted', {
         messageId: msg._id.toString(),

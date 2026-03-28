@@ -1,6 +1,6 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { MessageSquare, Users, LogOut, Sparkles, Moon, Sun, LayoutDashboard, Search, User, Settings, Shield } from 'lucide-react';
+import { MessageSquare, Users, LogOut, Sparkles, Moon, Sun, LayoutDashboard, Search, User, Settings, Shield, Brain } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { logoutUser } from '../api/auth';
 import { useTheme } from '../context/ThemeContext';
@@ -116,6 +116,18 @@ export default function Navbar() {
                 <Search size={16} />
                 <span className="hidden lg:inline">Search</span>
               </Link>
+              <Link
+                to="/memory"
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  isActive('/memory')
+                    ? 'bg-navy-700 text-white shadow-inner'
+                    : 'text-gray-400 hover:text-white hover:bg-navy-800'
+                }`}
+                aria-current={isActive('/memory') ? 'page' : undefined}
+              >
+                <Brain size={16} />
+                <span className="hidden xl:inline">Memory</span>
+              </Link>
             </div>
           )}
 
@@ -173,15 +185,17 @@ export default function Navbar() {
                       <Settings size={14} />
                       Settings
                     </Link>
-                    <Link
-                      to="/admin"
-                      className="flex items-center gap-2 px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-navy-700 transition-colors"
-                      onClick={() => setShowProfileMenu(false)}
-                      role="menuitem"
-                    >
-                      <Shield size={14} />
-                      Admin Panel
-                    </Link>
+                    {user.isAdmin ? (
+                      <Link
+                        to="/admin"
+                        className="flex items-center gap-2 px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-navy-700 transition-colors"
+                        onClick={() => setShowProfileMenu(false)}
+                        role="menuitem"
+                      >
+                        <Shield size={14} />
+                        Admin Panel
+                      </Link>
+                    ) : null}
                     <div className="border-t border-navy-700/50 my-1" />
                     <button
                       onClick={handleLogout}

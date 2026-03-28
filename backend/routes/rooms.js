@@ -8,6 +8,8 @@ const {
   getRoomMemberRole,
   hasRoomRole,
 } = require('../helpers/validate');
+const { getRoomInsight, refreshRoomInsight } = require('../services/conversationInsights');
+const { formatMessage } = require('../services/messageFormatting');
 
 const router = express.Router();
 
@@ -27,27 +29,21 @@ function formatRoomSummary(room, currentUserId, messageCount = 0) {
   };
 }
 
-function formatMessage(message) {
-  return {
-    id: message._id.toString(),
-    userId: message.userId,
-    username: message.username,
-    content: message.isDeleted ? 'This message was deleted' : message.content,
-    timestamp: message.createdAt,
-    isAI: message.isAI || false,
-    triggeredBy: message.triggeredBy || null,
-    replyTo: message.replyTo && message.replyTo.id ? message.replyTo : null,
-    reactions: message.reactions ? (message.reactions instanceof Map ? Object.fromEntries(message.reactions) : message.reactions) : {},
-    status: message.status || 'sent',
-    isPinned: message.isPinned || false,
-    isEdited: message.isEdited || false,
-    editedAt: message.editedAt || null,
-    isDeleted: message.isDeleted || false,
-    fileUrl: message.fileUrl || null,
-    fileName: message.fileName || null,
-    fileType: message.fileType || null,
-    fileSize: message.fileSize || null,
-  };
+async function ensureRoomMember(roomId, userId, selection = 'members creatorId') {
+  if (!isValidObjectId(roomId)) {
+    return { room: null, error: { status: 400, message: 'Invalid room ID' } };
+  }
+
+  const room = await Room.findById(roomId).select(selection).lean();
+  if (!room) {
+    return { room: null, error: { status: 404, message: 'Room not found' } };
+  }
+
+  if (!findRoomMember(room, userId)) {
+    return { room: null, error: { status: 403, message: 'Join the room before accessing it' } };
+  }
+
+  return { room, error: null };
 }
 
 // GET /api/rooms
@@ -172,30 +168,76 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/rooms/:id/insights
+router.get('/:id/insights', authMiddleware, async (req, res) => {
+  try {
+    const { room, error } = await ensureRoomMember(req.params.id, req.user.id, 'members');
+    if (error) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
+    const insight = await getRoomInsight(room._id.toString());
+    if (!insight) {
+      return res.status(404).json({ error: 'Room insight not found' });
+    }
+
+    res.json(insight);
+  } catch (err) {
+    console.error('Get room insight error:', err);
+    res.status(500).json({ error: 'Failed to load room insight' });
+  }
+});
+
+// POST /api/rooms/:id/actions/:action
+router.post('/:id/actions/:action', authMiddleware, async (req, res) => {
+  try {
+    const { room, error } = await ensureRoomMember(req.params.id, req.user.id, 'members');
+    if (error) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
+    const insight = await refreshRoomInsight(room._id.toString());
+    if (!insight) {
+      return res.status(404).json({ error: 'Room insight not found' });
+    }
+
+    if (req.params.action === 'summarize') {
+      return res.json({ summary: insight.summary, insight });
+    }
+
+    if (req.params.action === 'extract-tasks') {
+      return res.json({ actionItems: insight.actionItems || [], insight });
+    }
+
+    if (req.params.action === 'extract-decisions') {
+      return res.json({ decisions: insight.decisions || [], insight });
+    }
+
+    return res.status(400).json({ error: 'Unsupported action' });
+  } catch (err) {
+    console.error('Run room action error:', err);
+    res.status(500).json({ error: 'Failed to run room action' });
+  }
+});
+
 // GET /api/rooms/:id
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
-    if (!isValidObjectId(req.params.id)) {
-      return res.status(400).json({ error: 'Invalid room ID' });
-    }
-
-    const room = await Room.findById(req.params.id).lean();
-    if (!room) {
-      return res.status(404).json({ error: 'Room not found' });
-    }
-
-    if (!findRoomMember(room, req.user.id)) {
-      return res.status(403).json({ error: 'Join the room before viewing its messages' });
+    const { room, error } = await ensureRoomMember(req.params.id, req.user.id);
+    if (error) {
+      return res.status(error.status).json({ error: error.message });
     }
 
     const messages = await Message.find({ roomId: room._id })
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
+    const insight = await getRoomInsight(room._id.toString());
 
     res.json({
       ...formatRoomSummary(room, req.user.id, messages.length),
       messages: messages.reverse().map(formatMessage),
+      insight,
     });
   } catch (err) {
     console.error('Get room error:', err);

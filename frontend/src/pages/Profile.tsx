@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Camera, Save, User, Mail, Calendar, Shield, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -8,12 +8,18 @@ import { updateProfile } from '../api/users';
 import toast from 'react-hot-toast';
 
 export default function Profile() {
-  const { user, login, accessToken, refreshToken } = useAuthStore();
+  const { user, setUser } = useAuthStore();
   const [displayName, setDisplayName] = useState(user?.displayName || user?.username || '');
-  const [bio, setBio] = useState('');
+  const [bio, setBio] = useState(user?.bio || '');
   const [avatar, setAvatar] = useState<string | null>(user?.avatar || null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setDisplayName(user?.displayName || user?.username || '');
+    setBio(user?.bio || '');
+    setAvatar(user?.avatar || null);
+  }, [user]);
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -32,16 +38,18 @@ export default function Profile() {
   };
 
   const handleSave = async () => {
-    if (!user || !accessToken || !refreshToken) return;
+    if (!user) return;
     setSaving(true);
     try {
       const updated = await updateProfile({ displayName, bio, avatar });
-      // Update local auth store with new data
-      login(
-        { ...user, displayName: updated.displayName, avatar: updated.avatar as string | undefined },
-        accessToken,
-        refreshToken
-      );
+      setUser({
+        ...user,
+        displayName: updated.displayName,
+        avatar: updated.avatar || undefined,
+        bio: updated.bio,
+        onlineStatus: updated.onlineStatus,
+        lastSeen: updated.lastSeen,
+      });
       toast.success('Profile updated!');
     } catch (err) {
       console.error('Save profile error:', err);

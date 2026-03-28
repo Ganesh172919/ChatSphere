@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   MessageSquare, Users, Search, Sparkles, TrendingUp,
-  ArrowRight, Clock, Zap, BarChart3, Globe,
+  ArrowRight, Clock, Zap, Globe, Brain,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { useAuthStore } from '../store/authStore';
@@ -233,15 +233,15 @@ export default function Dashboard() {
             </Link>
 
             <Link
-              to="/profile"
+              to="/memory"
               className="group flex items-center gap-4 p-5 rounded-2xl bg-gradient-to-br from-navy-800/90 to-navy-800/60 border border-navy-700/50 hover:border-emerald-500/40 transition-all duration-300 backdrop-blur-lg"
             >
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <BarChart3 size={20} className="text-white" />
+                <Brain size={20} className="text-white" />
               </div>
               <div className="flex-1">
-                <p className="font-display font-semibold text-white">My Profile</p>
-                <p className="text-xs text-gray-500">Customize avatar, bio & settings</p>
+                <p className="font-display font-semibold text-white">Memory Center</p>
+                <p className="text-xs text-gray-500">Review what ChatSphere remembers</p>
               </div>
               <ArrowRight size={16} className="text-gray-600 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all" />
             </Link>

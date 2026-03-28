@@ -1,10 +1,13 @@
 import api from './axios';
+import type { ConversationInsight, MemoryReference } from '../types/chat';
 
 export interface ConversationSummary {
   id: string;
   title: string;
   messageCount: number;
   lastMessage: string;
+  sourceType?: string;
+  sourceLabel?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -12,7 +15,9 @@ export interface ConversationSummary {
 export interface ConversationDetail {
   id: string;
   title: string;
-  messages: Array<{ role: string; content: string; timestamp: string }>;
+  sourceType?: string;
+  sourceLabel?: string;
+  messages: Array<{ role: string; content: string; timestamp: string; memoryRefs?: MemoryReference[] }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,6 +29,21 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
 
 export async function fetchConversation(id: string): Promise<ConversationDetail> {
   const { data } = await api.get<ConversationDetail>(`/conversations/${id}`);
+  return data;
+}
+
+export async function fetchConversationInsight(id: string): Promise<ConversationInsight> {
+  const { data } = await api.get<ConversationInsight>(`/conversations/${id}/insights`);
+  return data;
+}
+
+export async function runConversationAction(
+  id: string,
+  action: 'summarize' | 'extract-tasks' | 'extract-decisions'
+): Promise<{ summary?: string; decisions?: string[]; actionItems?: ConversationInsight['actionItems']; insight: ConversationInsight }> {
+  const { data } = await api.post<{ summary?: string; decisions?: string[]; actionItems?: ConversationInsight['actionItems']; insight: ConversationInsight }>(
+    `/conversations/${id}/actions/${action}`
+  );
   return data;
 }
 

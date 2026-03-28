@@ -1,12 +1,10 @@
 # ChatSphere REST API Reference
 
-## Base URLs
+Base API URL in local development:
 
-- frontend: `http://localhost:5173`
-- backend: `http://localhost:3000`
-- API base: `http://localhost:3000/api`
+- `http://localhost:3000/api`
 
-Unless noted otherwise, protected routes require:
+Protected routes require:
 
 ```http
 Authorization: Bearer <access-token>
@@ -16,10 +14,6 @@ Authorization: Bearer <access-token>
 
 ### `POST /api/auth/register`
 
-Create a local account.
-
-Body:
-
 ```json
 {
   "username": "ravi",
@@ -28,21 +22,9 @@ Body:
 }
 ```
 
-Returns:
-
-- `201` with `user`, `accessToken`, `refreshToken`
-
-Notes:
-
-- username is normalized to lowercase
-- email is normalized to lowercase
-- auth rate limiting applies
+Returns `user`, `accessToken`, and `refreshToken`.
 
 ### `POST /api/auth/login`
-
-Log in with email and password.
-
-Body:
 
 ```json
 {
@@ -51,15 +33,7 @@ Body:
 }
 ```
 
-Returns:
-
-- `200` with `user`, `accessToken`, `refreshToken`
-
 ### `POST /api/auth/refresh`
-
-Rotate tokens.
-
-Body:
 
 ```json
 {
@@ -67,59 +41,11 @@ Body:
 }
 ```
 
-Returns:
-
-- `200` with new `accessToken` and `refreshToken`
-
 ### `POST /api/auth/logout`
-
-Invalidate the submitted refresh token.
 
 ### `GET /api/auth/me`
 
-Return the currently signed-in user.
-
-### `POST /api/auth/forgot-password`
-
-Start the reset-password flow.
-
-Body:
-
-```json
-{
-  "email": "ravi@example.com"
-}
-```
-
-Returns the same success message whether the account exists or not.
-
-### `POST /api/auth/reset-password`
-
-Finish the reset-password flow.
-
-Body:
-
-```json
-{
-  "email": "ravi@example.com",
-  "token": "reset-token",
-  "newPassword": "new-secret123"
-}
-```
-
-### `GET /api/auth/google`
-
-Start Google OAuth.
-
-### `GET /api/auth/google/callback`
-
-OAuth callback used by Google. This route redirects to the frontend callback page with a short-lived login code, not with JWT tokens.
-
 ### `POST /api/auth/google/exchange`
-
-Exchange the short-lived Google login code for app tokens.
-
-Body:
 
 ```json
 {
@@ -127,17 +53,9 @@ Body:
 }
 ```
 
-Returns:
-
-- `200` with `user`, `accessToken`, `refreshToken`
-
-## Solo AI Chat
+## Solo Chat
 
 ### `POST /api/chat`
-
-Send a solo chat prompt to Gemini and persist the conversation.
-
-Body:
 
 ```json
 {
@@ -147,14 +65,29 @@ Body:
 }
 ```
 
-Returns:
+Example response:
 
 ```json
 {
   "conversationId": "conversation-id",
   "role": "model",
   "content": "AI response text",
-  "timestamp": "2026-03-28T10:00:00.000Z"
+  "timestamp": "2026-03-28T10:00:00.000Z",
+  "memoryRefs": [
+    {
+      "id": "memory-id",
+      "summary": "The user likes TypeScript.",
+      "score": 0.78
+    }
+  ],
+  "insight": {
+    "title": "WebSocket discussion",
+    "summary": "The user asked for a simple explanation of WebSockets.",
+    "intent": "question-answering",
+    "topics": ["websockets", "networking"],
+    "decisions": [],
+    "actionItems": []
+  }
 }
 ```
 
@@ -162,41 +95,42 @@ Returns:
 
 ### `GET /api/conversations`
 
-List the current user's saved solo conversations.
+Returns summaries:
+
+```json
+[
+  {
+    "id": "conversation-id",
+    "title": "Explain WebSockets simply",
+    "sourceType": "native",
+    "sourceLabel": "ChatSphere",
+    "messageCount": 4,
+    "lastMessage": "AI response text",
+    "createdAt": "2026-03-28T10:00:00.000Z",
+    "updatedAt": "2026-03-28T10:01:00.000Z"
+  }
+]
+```
 
 ### `GET /api/conversations/:id`
 
-Load one solo conversation.
+Returns messages plus `memoryRefs` on assistant replies when relevant.
+
+### `GET /api/conversations/:id/insights`
+
+### `POST /api/conversations/:id/actions/summarize`
+
+### `POST /api/conversations/:id/actions/extract-tasks`
+
+### `POST /api/conversations/:id/actions/extract-decisions`
 
 ### `DELETE /api/conversations/:id`
-
-Delete one solo conversation.
 
 ## Rooms
 
 ### `GET /api/rooms`
 
-List rooms with summary data.
-
-Returned room fields include:
-
-- `id`
-- `name`
-- `description`
-- `tags`
-- `maxUsers`
-- `memberCount`
-- `creatorId`
-- `createdAt`
-- `messageCount`
-- `isMember`
-- `currentUserRole`
-
 ### `POST /api/rooms`
-
-Create a room.
-
-Body:
 
 ```json
 {
@@ -209,277 +143,250 @@ Body:
 
 ### `POST /api/rooms/:id/join`
 
-Join a room if:
-
-- the room exists
-- the user is not already a member
-- capacity is not full
-
 ### `POST /api/rooms/:id/leave`
-
-Leave a room. The room creator cannot leave their own room.
 
 ### `GET /api/rooms/:id`
 
-Load room details and the most recent 50 messages.
-
-Membership is required.
-
-Message payloads can include:
-
-- `replyTo`
-- `reactions`
-- `status`
-- `isPinned`
-- `isEdited`
-- `editedAt`
-- `isDeleted`
-- `fileUrl`
-- `fileName`
-- `fileType`
-- `fileSize`
-
-### `DELETE /api/rooms/:id`
-
-Delete a room. Creator only.
-
-### `POST /api/rooms/:id/pin/:messageId`
-
-Pin a message. Admin or moderator only.
-
-### `DELETE /api/rooms/:id/pin/:messageId`
-
-Unpin a message. Admin or moderator only.
-
-### `GET /api/rooms/:id/pinned`
-
-List pinned messages for a room. Membership is required.
-
-## Uploads
-
-### `POST /api/uploads`
-
-Upload a file for chat use.
-
-Accepted mime types:
-
-- `image/jpeg`
-- `image/png`
-- `image/gif`
-- `image/webp`
-- `application/pdf`
-- `text/plain`
-
-Current size limit:
-
-- `5 MB`
-
-Returns:
+Example response shape:
 
 ```json
 {
-  "fileUrl": "/api/uploads/generated-file-name.png",
-  "fileName": "screenshot.png",
-  "fileType": "image/png",
-  "fileSize": 123456
+  "id": "room-id",
+  "name": "Project Room",
+  "description": "Release prep",
+  "tags": ["project", "release"],
+  "messageCount": 12,
+  "currentUserRole": "creator",
+  "insight": {
+    "title": "Room insight",
+    "summary": "The room discussed release prep and next steps.",
+    "intent": "discussion",
+    "topics": ["release", "tasks"],
+    "decisions": ["Ship after QA"],
+    "actionItems": [
+      {
+        "text": "Collect QA feedback",
+        "owner": "ravi",
+        "done": false
+      }
+    ]
+  },
+  "messages": [
+    {
+      "id": "message-id",
+      "userId": "user-id",
+      "username": "ravi",
+      "content": "Hello team",
+      "timestamp": "2026-03-28T10:00:00.000Z",
+      "reactions": {},
+      "replyTo": null,
+      "memoryRefs": []
+    }
+  ]
 }
 ```
 
-### `GET /api/uploads/:filename`
+### `GET /api/rooms/:id/insights`
 
-Serve an uploaded file.
+### `POST /api/rooms/:id/actions/summarize`
 
-## Group Members
+### `POST /api/rooms/:id/actions/extract-tasks`
 
-### `GET /api/groups/:roomId/members`
+### `POST /api/rooms/:id/actions/extract-decisions`
 
-List room members. Membership is required.
+### `POST /api/rooms/:id/pin/:messageId`
 
-### `PUT /api/groups/:roomId/members/:userId/role`
+### `DELETE /api/rooms/:id/pin/:messageId`
 
-Update a member's role.
+### `GET /api/rooms/:id/pinned`
 
-Allowed roles:
-
-- `admin`
-- `moderator`
-- `member`
-
-Only room managers with enough permission can change roles.
-
-### `DELETE /api/groups/:roomId/members/:userId`
-
-Kick a member from a room if the acting user has permission.
+### `DELETE /api/rooms/:id`
 
 ## Polls
 
 ### `POST /api/polls`
 
-Create a poll in a room.
-
-Body:
-
 ```json
 {
   "roomId": "room-id",
-  "question": "Which release date works best?",
-  "options": ["Monday", "Friday"],
+  "question": "When should we ship?",
+  "options": ["Today", "Tomorrow", "Next week"],
   "allowMultipleVotes": false,
   "isAnonymous": false,
   "expiresInMinutes": 60
 }
 ```
 
-Rules:
-
-- room membership is required
-- at least 2 options
-- max 10 options
-- option text must be unique
-
 ### `GET /api/polls/room/:roomId`
-
-List recent polls for a room. Membership is required.
 
 ### `POST /api/polls/:id/vote`
 
-Vote or unvote on a poll option.
-
-Body:
-
 ```json
 {
-  "optionIndex": 0
+  "optionIndex": 1
 }
 ```
-
-Rules:
-
-- membership is required
-- expired polls reject voting
-- duplicate votes are prevented correctly
 
 ### `POST /api/polls/:id/close`
 
-Close a poll.
+## AI Utility Routes
 
-Allowed actors:
-
-- poll creator
-- room admin
-- room moderator
-
-## Search
-
-### `GET /api/search/messages`
-
-Search room messages the current user is allowed to see.
-
-Query params:
-
-- `q` required
-- `roomId`
-- `userId`
-- `startDate`
-- `endDate`
-- `isAI=true`
-- `isPinned=true`
-- `hasFile=true`
-- `fileType=image/png`
-- `page`
-- `limit`
-
-Notes:
-
-- only joined rooms are searched
-- blocked users are filtered out
-- deleted messages are excluded
-
-### `GET /api/search/conversations`
-
-Search solo AI conversations by title or message content.
-
-Query params:
-
-- `q` required
-- `page`
-- `limit`
-
-## Moderation
-
-### `POST /api/moderation/report`
-
-Create a moderation report for a user or message.
-
-Body:
+### `POST /api/ai/smart-replies`
 
 ```json
 {
-  "targetType": "message",
-  "targetId": "message-id",
-  "roomId": "room-id",
-  "reason": "spam",
-  "description": "Optional extra detail"
+  "messages": [
+    { "username": "ravi", "content": "Can you review the API docs?" }
+  ],
+  "context": "Group chat room: docs"
 }
 ```
 
-Allowed reasons:
+### `POST /api/ai/sentiment`
 
-- `spam`
-- `harassment`
-- `hate_speech`
-- `inappropriate_content`
-- `impersonation`
-- `other`
+```json
+{
+  "text": "I think we're very close to shipping this."
+}
+```
 
-### `POST /api/moderation/block`
+### `POST /api/ai/grammar`
 
-Block a user.
+```json
+{
+  "text": "Can you checks this sentence?"
+}
+```
 
-### `DELETE /api/moderation/block/:userId`
+## Memory
 
-Unblock a user.
+### `GET /api/memory`
 
-### `GET /api/moderation/blocked`
+Query params:
 
-List blocked users.
+- `q`
+- `pinned`
+- `limit`
+
+### `PUT /api/memory/:id`
+
+```json
+{
+  "summary": "The user prefers TypeScript for frontend work.",
+  "details": "Mentioned while discussing the new dashboard.",
+  "tags": ["typescript", "preferences"],
+  "pinned": true
+}
+```
+
+### `DELETE /api/memory/:id`
+
+### `POST /api/memory/import`
+
+Preview example:
+
+```json
+{
+  "mode": "preview",
+  "filename": "chatgpt-export.json",
+  "content": "{ ... external export content ... }"
+}
+```
+
+Import example:
+
+```json
+{
+  "mode": "import",
+  "filename": "claude-history.md",
+  "content": "Human: ...\nAssistant: ..."
+}
+```
+
+### `GET /api/memory/export?format=normalized|markdown|adapter`
+
+## Export
+
+### `GET /api/export/conversations?format=normalized|markdown|adapter`
+
+### `GET /api/export/conversation/:id?format=json|markdown`
+
+### `GET /api/export/rooms/:roomId`
 
 ## Settings
 
 ### `GET /api/settings`
 
-Load the current user's settings.
-
 ### `PUT /api/settings`
 
-Update supported setting groups:
+```json
+{
+  "theme": {
+    "mode": "dark",
+    "customTheme": "midnight"
+  },
+  "accentColor": "#06B6D4",
+  "notifications": {
+    "sound": true,
+    "desktop": true,
+    "mentions": true,
+    "replies": true
+  },
+  "aiFeatures": {
+    "smartReplies": true,
+    "sentimentAnalysis": true,
+    "grammarCheck": true
+  }
+}
+```
 
-- `theme`
-- `accentColor`
-- `notifications`
-- `aiFeatures`
+## Users
 
-## Export
+### `PUT /api/users/profile`
 
-### `GET /api/export/conversations`
+```json
+{
+  "displayName": "Ravi",
+  "bio": "Shipping product and learning AI systems.",
+  "avatar": "data:image/png;base64,..."
+}
+```
 
-Export the current user's solo conversations as JSON.
+### `GET /api/users/:id`
 
-### `GET /api/export/rooms/:roomId`
+## Dashboard, Search, Moderation
 
-Export room messages as JSON.
+- `GET /api/dashboard`
+- `GET /api/search`
+- `GET /api/moderation/blocked`
+- `POST /api/moderation/block/:userId`
+- `DELETE /api/moderation/block/:userId`
 
-Rules:
+## Uploads
 
-- room membership is required
-- deleted messages are exported as `[deleted]`
-- attachment metadata is included when present
+### `POST /api/uploads`
 
-## Admin And Analytics
+Returns:
 
-These routes stay protected behind authenticated admin access where applicable:
+```json
+{
+  "fileUrl": "/api/uploads/abc123.png",
+  "fileName": "design.png",
+  "fileType": "image/png",
+  "fileSize": 123456
+}
+```
 
-- `/api/admin/*`
-- `/api/analytics/*`
+## Admin and Analytics
 
-Use the frontend API wrappers in `frontend/src/api/admin.ts` and `frontend/src/api/analytics.ts` as the current contract reference for those screens.
+These routes require an admin user.
+
+- `GET /api/admin/stats`
+- `GET /api/admin/reports`
+- `PUT /api/admin/reports/:id`
+- `GET /api/admin/users`
+- `GET /api/admin/prompts`
+- `PUT /api/admin/prompts/:key`
+- `GET /api/analytics/overview`
+- `GET /api/analytics/activity`
+- `GET /api/analytics/growth`

@@ -1,35 +1,36 @@
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Conversation = require('../models/Conversation');
+const { getConversationInsight, refreshConversationInsight } = require('../services/conversationInsights');
 
 const router = express.Router();
 
-// GET /api/conversations — List user's conversations
+// GET /api/conversations - List user's conversations
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const conversations = await Conversation.find({ userId: req.user.id })
-      .select('title messages createdAt updatedAt')
+      .select('title messages createdAt updatedAt sourceType sourceLabel')
       .sort({ updatedAt: -1 })
       .limit(50)
       .lean();
 
-    const result = conversations.map(c => ({
-      id: c._id.toString(),
-      title: c.title,
-      messageCount: c.messages.length,
-      lastMessage: c.messages.length > 0 ? c.messages[c.messages.length - 1].content.slice(0, 100) : '',
-      createdAt: c.createdAt,
-      updatedAt: c.updatedAt,
-    }));
-
-    res.json(result);
+    res.json(conversations.map((conversation) => ({
+      id: conversation._id.toString(),
+      title: conversation.title,
+      sourceType: conversation.sourceType || 'native',
+      sourceLabel: conversation.sourceLabel || 'ChatSphere',
+      messageCount: conversation.messages.length,
+      lastMessage: conversation.messages.length > 0 ? conversation.messages[conversation.messages.length - 1].content.slice(0, 100) : '',
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+    })));
   } catch (err) {
     console.error('List conversations error:', err);
     res.status(500).json({ error: 'Failed to load conversations' });
   }
 });
 
-// GET /api/conversations/:id — Get full conversation
+// GET /api/conversations/:id - Get full conversation
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const conversation = await Conversation.findOne({
@@ -44,10 +45,13 @@ router.get('/:id', authMiddleware, async (req, res) => {
     res.json({
       id: conversation._id.toString(),
       title: conversation.title,
-      messages: conversation.messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        timestamp: m.timestamp,
+      sourceType: conversation.sourceType || 'native',
+      sourceLabel: conversation.sourceLabel || 'ChatSphere',
+      messages: conversation.messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+        memoryRefs: message.memoryRefs || [],
       })),
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
@@ -58,7 +62,59 @@ router.get('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/conversations/:id — Delete conversation
+// GET /api/conversations/:id/insights
+router.get('/:id/insights', authMiddleware, async (req, res) => {
+  try {
+    const insight = await getConversationInsight(req.user.id, req.params.id);
+    if (!insight) {
+      return res.status(404).json({ error: 'Conversation insight not found' });
+    }
+
+    res.json(insight);
+  } catch (err) {
+    console.error('Get conversation insight error:', err);
+    res.status(500).json({ error: 'Failed to load conversation insight' });
+  }
+});
+
+// POST /api/conversations/:id/actions/:action
+router.post('/:id/actions/:action', authMiddleware, async (req, res) => {
+  try {
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      userId: req.user.id,
+    }).select('_id').lean();
+
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const insight = await refreshConversationInsight(req.user.id, conversation._id);
+    if (!insight) {
+      return res.status(404).json({ error: 'Conversation insight not found' });
+    }
+
+    const action = req.params.action;
+    if (action === 'summarize') {
+      return res.json({ summary: insight.summary, insight });
+    }
+
+    if (action === 'extract-tasks') {
+      return res.json({ actionItems: insight.actionItems || [], insight });
+    }
+
+    if (action === 'extract-decisions') {
+      return res.json({ decisions: insight.decisions || [], insight });
+    }
+
+    return res.status(400).json({ error: 'Unsupported action' });
+  } catch (err) {
+    console.error('Conversation action error:', err);
+    res.status(500).json({ error: 'Failed to run conversation action' });
+  }
+});
+
+// DELETE /api/conversations/:id - Delete conversation
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const result = await Conversation.deleteOne({

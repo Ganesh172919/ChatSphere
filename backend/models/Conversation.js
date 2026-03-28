@@ -14,6 +14,11 @@ const conversationMessageSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  memoryRefs: [{
+    id: { type: String, required: true },
+    summary: { type: String, required: true },
+    score: { type: Number, default: null },
+  }],
 }, { _id: false });
 
 const conversationSchema = new mongoose.Schema({
@@ -30,6 +35,25 @@ const conversationSchema = new mongoose.Schema({
     maxlength: 100,
   },
   messages: [conversationMessageSchema],
+  sourceType: {
+    type: String,
+    enum: ['native', 'chatgpt', 'claude', 'markdown', 'text', 'json'],
+    default: 'native',
+  },
+  sourceLabel: {
+    type: String,
+    default: 'ChatSphere',
+  },
+  importFingerprint: {
+    type: String,
+    default: null,
+    index: true,
+  },
+  importSessionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ImportSession',
+    default: null,
+  },
 }, {
   timestamps: true,
 });

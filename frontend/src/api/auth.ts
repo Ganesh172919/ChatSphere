@@ -1,12 +1,15 @@
 import api from './axios';
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   username: string;
   email: string;
   displayName?: string;
   avatar?: string;
+  bio?: string;
   authProvider?: string;
+  onlineStatus?: string;
+  lastSeen?: string | null;
   isAdmin?: boolean;
   createdAt: string;
 }

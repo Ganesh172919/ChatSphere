@@ -7,10 +7,11 @@ interface Props {
   isOpen: boolean;
   onToggle: () => void;
   onNewChat: () => void;
+  onDeleteConversation: (conversationId: string) => void;
 }
 
-export default function Sidebar({ isOpen, onToggle, onNewChat }: Props) {
-  const { conversations, activeConversationId, setActiveConversation, deleteConversation } = useChatStore();
+export default function Sidebar({ isOpen, onToggle, onNewChat, onDeleteConversation }: Props) {
+  const { conversations, activeConversationId, setActiveConversation } = useChatStore();
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -103,7 +104,7 @@ export default function Sidebar({ isOpen, onToggle, onNewChat }: Props) {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    deleteConversation(conv.id);
+                    onDeleteConversation(conv.id);
                   }}
                   className="p-1 rounded text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 cursor-pointer"
                   title="Delete conversation"

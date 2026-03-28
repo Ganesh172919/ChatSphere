@@ -24,7 +24,15 @@ Optional:
 ```bash
 cd backend
 npm install
-copy .env.example .env
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+cd backend
+npm install
+Copy-Item .env.example .env
 ```
 
 Fill `backend/.env`:

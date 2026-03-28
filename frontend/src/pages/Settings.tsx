@@ -10,6 +10,7 @@ import { fetchSettings, updateSettings } from '../api/settings';
 import type { UserSettings } from '../api/settings';
 import { getBlockedUsers, unblockUser } from '../api/moderation';
 import type { BlockedUser } from '../api/moderation';
+import { useTheme } from '../context/ThemeContext';
 import toast from 'react-hot-toast';
 
 const ACCENT_COLORS = [
@@ -33,6 +34,7 @@ const CUSTOM_THEMES = [
 ];
 
 export default function Settings() {
+  const { setAccentColor, setCustomTheme, setThemeMode } = useTheme();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -51,6 +53,9 @@ export default function Settings() {
     try {
       const data = await fetchSettings();
       setSettings(data);
+      setThemeMode(data.theme.mode);
+      setCustomTheme(data.theme.customTheme as Parameters<typeof setCustomTheme>[0]);
+      setAccentColor(data.accentColor);
     } catch {
       // Use defaults if API fails
       setSettings({
@@ -92,6 +97,9 @@ export default function Settings() {
     try {
       const updated = await updateSettings({ [key]: value });
       setSettings(updated);
+      setThemeMode(updated.theme.mode);
+      setCustomTheme(updated.theme.customTheme as Parameters<typeof setCustomTheme>[0]);
+      setAccentColor(updated.accentColor);
       toast.success('Settings saved');
     } catch {
       toast.error('Failed to save');

@@ -1,12 +1,15 @@
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
+const aiQuotaMiddleware = require('../middleware/aiQuota');
 const { sendMessage } = require('../services/gemini');
+const { retrieveRelevantMemories, markMemoriesUsed, upsertMemoryEntries } = require('../services/memory');
+const { getConversationInsight, refreshConversationInsight } = require('../services/conversationInsights');
 const Conversation = require('../models/Conversation');
 
 const router = express.Router();
 
-// POST /api/chat — Solo AI chat
-router.post('/', authMiddleware, async (req, res) => {
+// POST /api/chat - Solo AI chat
+router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
   try {
     const { message, conversationId, history } = req.body;
 
@@ -15,18 +18,26 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     const chatHistory = Array.isArray(history) ? history : [];
+    const memoryEntries = await retrieveRelevantMemories({
+      userId: req.user.id,
+      query: message.trim(),
+      limit: 5,
+    });
+    const existingInsight = conversationId
+      ? await getConversationInsight(req.user.id, conversationId)
+      : null;
 
-    // Get AI response
-    const responseText = await sendMessage(chatHistory, message.trim());
+    const responseText = await sendMessage(chatHistory, message.trim(), {
+      memoryEntries,
+      insight: existingInsight,
+    });
 
-    // Persist to MongoDB
-    let conversation;
+    let conversation = null;
     if (conversationId) {
       conversation = await Conversation.findOne({ _id: conversationId, userId: req.user.id });
     }
 
     if (!conversation) {
-      // Create new conversation
       conversation = new Conversation({
         userId: req.user.id,
         title: message.trim().slice(0, 80) + (message.length > 80 ? '...' : ''),
@@ -34,7 +45,12 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
-    // Add user message + AI response
+    const memoryRefs = memoryEntries.map((entry) => ({
+      id: entry._id.toString(),
+      summary: entry.summary,
+      score: entry.score,
+    }));
+
     conversation.messages.push({
       role: 'user',
       content: message.trim(),
@@ -45,23 +61,32 @@ router.post('/', authMiddleware, async (req, res) => {
       role: 'assistant',
       content: responseText,
       timestamp: new Date(),
+      memoryRefs,
     });
 
     await conversation.save();
+    await Promise.all([
+      upsertMemoryEntries({
+        userId: req.user.id,
+        text: message.trim(),
+        sourceType: 'conversation',
+        sourceConversationId: conversation._id,
+      }),
+      markMemoriesUsed(memoryEntries),
+    ]);
+
+    const insight = await refreshConversationInsight(req.user.id, conversation._id);
 
     res.json({
       conversationId: conversation._id.toString(),
       role: 'model',
       content: responseText,
       timestamp: new Date().toISOString(),
+      memoryRefs,
+      insight,
     });
   } catch (err) {
     console.error('Chat error:', err);
-
-    if (err.message && err.message.includes('API key')) {
-      return res.status(500).json({ error: 'AI service configuration error. Please check the API key.' });
-    }
-
     res.status(500).json({ error: 'Failed to get AI response. Please try again.' });
   }
 });

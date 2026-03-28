@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ConversationInsight, MemoryReference } from '../types/chat';
 
 export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  memoryRefs?: MemoryReference[];
 }
 
 export interface Conversation {
@@ -12,20 +14,35 @@ export interface Conversation {
   title: string;
   messages: Message[];
   createdAt: string;
-  serverId?: string; // MongoDB _id from backend
+  updatedAt?: string;
+  serverId?: string;
+  sourceType?: string;
+  sourceLabel?: string;
+  insight?: ConversationInsight | null;
 }
 
 interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
-  addConversation: (conv: Conversation) => void;
+  addConversation: (conversation: Conversation) => void;
+  upsertConversation: (conversation: Conversation) => void;
   setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Message) => void;
+  setConversationMessages: (conversationId: string, messages: Message[]) => void;
   updateConversationTitle: (conversationId: string, title: string) => void;
   updateConversationServerId: (conversationId: string, serverId: string) => void;
+  updateConversationInsight: (conversationId: string, insight: ConversationInsight | null) => void;
   deleteConversation: (conversationId: string) => void;
   getActiveConversation: () => Conversation | undefined;
   loadConversations: (conversations: Conversation[]) => void;
+}
+
+function sortByUpdatedDate(conversations: Conversation[]) {
+  return [...conversations].sort((a, b) => {
+    const left = new Date(a.updatedAt || a.createdAt).getTime();
+    const right = new Date(b.updatedAt || b.createdAt).getTime();
+    return right - left;
+  });
 }
 
 export const useChatStore = create<ChatState>()(
@@ -33,53 +50,84 @@ export const useChatStore = create<ChatState>()(
     (set, get) => ({
       conversations: [],
       activeConversationId: null,
-      addConversation: (conv) =>
+      addConversation: (conversation) =>
         set((state) => ({
-          conversations: [conv, ...state.conversations],
-          activeConversationId: conv.id,
+          conversations: sortByUpdatedDate([conversation, ...state.conversations.filter((item) => item.id !== conversation.id)]),
+          activeConversationId: conversation.id,
+        })),
+      upsertConversation: (conversation) =>
+        set((state) => ({
+          conversations: sortByUpdatedDate([
+            conversation,
+            ...state.conversations.filter((item) => item.id !== conversation.id),
+          ]),
         })),
       setActiveConversation: (id) => set({ activeConversationId: id }),
       addMessage: (conversationId, message) =>
         set((state) => ({
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId
-              ? { ...c, messages: [...c.messages, message] }
-              : c
+          conversations: sortByUpdatedDate(state.conversations.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  messages: [...conversation.messages, message],
+                  updatedAt: message.timestamp,
+                }
+              : conversation
+          )),
+        })),
+      setConversationMessages: (conversationId, messages) =>
+        set((state) => ({
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  messages,
+                  updatedAt: messages[messages.length - 1]?.timestamp || conversation.updatedAt || conversation.createdAt,
+                }
+              : conversation
           ),
         })),
       updateConversationTitle: (conversationId, title) =>
         set((state) => ({
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId ? { ...c, title } : c
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, title } : conversation
           ),
         })),
       updateConversationServerId: (conversationId, serverId) =>
         set((state) => ({
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId ? { ...c, serverId } : c
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, serverId } : conversation
+          ),
+        })),
+      updateConversationInsight: (conversationId, insight) =>
+        set((state) => ({
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, insight } : conversation
           ),
         })),
       deleteConversation: (conversationId) =>
         set((state) => {
-          const newConversations = state.conversations.filter(
-            (c) => c.id !== conversationId
-          );
+          const conversations = state.conversations.filter((conversation) => conversation.id !== conversationId);
           return {
-            conversations: newConversations,
+            conversations,
             activeConversationId:
               state.activeConversationId === conversationId
-                ? newConversations[0]?.id || null
+                ? conversations[0]?.id || null
                 : state.activeConversationId,
           };
         }),
       getActiveConversation: () => {
         const state = get();
-        return state.conversations.find(
-          (c) => c.id === state.activeConversationId
-        );
+        return state.conversations.find((conversation) => conversation.id === state.activeConversationId);
       },
       loadConversations: (conversations) =>
-        set({ conversations }),
+        set((state) => ({
+          conversations: sortByUpdatedDate(conversations),
+          activeConversationId:
+            state.activeConversationId && conversations.some((conversation) => conversation.id === state.activeConversationId)
+              ? state.activeConversationId
+              : conversations[0]?.id || null,
+        })),
     }),
     {
       name: 'chat-storage',

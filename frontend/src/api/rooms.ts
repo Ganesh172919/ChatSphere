@@ -1,4 +1,5 @@
 import api from './axios';
+import type { ConversationInsight, MemoryReference } from '../types/chat';
 
 export interface Room {
   id: string;
@@ -16,6 +17,7 @@ export interface Room {
 
 export interface RoomDetail extends Room {
   messages: GroupMessage[];
+  insight?: ConversationInsight | null;
 }
 
 export interface GroupMessage {
@@ -37,6 +39,7 @@ export interface GroupMessage {
   fileName?: string | null;
   fileType?: string | null;
   fileSize?: number | null;
+  memoryRefs?: MemoryReference[];
 }
 
 export async function fetchRooms(): Promise<Room[]> {
@@ -51,6 +54,21 @@ export async function createRoom(name: string, description: string, tags: string
 
 export async function fetchRoomById(id: string): Promise<RoomDetail> {
   const { data } = await api.get<RoomDetail>(`/rooms/${id}`);
+  return data;
+}
+
+export async function fetchRoomInsight(id: string): Promise<ConversationInsight> {
+  const { data } = await api.get<ConversationInsight>(`/rooms/${id}/insights`);
+  return data;
+}
+
+export async function runRoomAction(
+  id: string,
+  action: 'summarize' | 'extract-tasks' | 'extract-decisions'
+): Promise<{ summary?: string; decisions?: string[]; actionItems?: ConversationInsight['actionItems']; insight: ConversationInsight }> {
+  const { data } = await api.post<{ summary?: string; decisions?: string[]; actionItems?: ConversationInsight['actionItems']; insight: ConversationInsight }>(
+    `/rooms/${id}/actions/${action}`
+  );
   return data;
 }
 
