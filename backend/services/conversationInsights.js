@@ -3,6 +3,7 @@ const Message = require('../models/Message');
 const ConversationInsight = require('../models/ConversationInsight');
 const { getJsonFromModel } = require('./gemini');
 const { normalizeText } = require('./memory');
+const logger = require('../helpers/logger');
 
 function buildScopeKey(scopeType, scopeId, userId = null) {
   return `${scopeType}:${scopeId}:${userId ? String(userId) : 'global'}`;
@@ -42,7 +43,17 @@ async function generateInsightPayload(messages, fallbackTitle) {
   ].join('\n\n');
 
   const fallback = buildFallbackInsight(messages, fallbackTitle);
-  const result = await getJsonFromModel(prompt, fallback);
+  let result = fallback;
+
+  try {
+    result = await getJsonFromModel(prompt, fallback);
+  } catch (error) {
+    logger.warn('INSIGHT_FALLBACK', 'Using deterministic insight fallback', {
+      fallbackTitle,
+      messageCount: messages.length,
+      error: logger.serializeError(error),
+    });
+  }
 
   return {
     title: String(result.title || fallback.title).slice(0, 120),
@@ -69,6 +80,17 @@ async function generateInsightPayload(messages, fallbackTitle) {
 
 async function saveInsight({ scopeType, scopeId, userId = null, conversationId = null, roomId = null, messages, fallbackTitle }) {
   const payload = await generateInsightPayload(messages, fallbackTitle);
+
+  logger.info('INSIGHT_SAVE', 'Persisting conversation insight', {
+    scopeType,
+    scopeId: String(scopeId),
+    userId: userId ? String(userId) : null,
+    conversationId: conversationId ? String(conversationId) : null,
+    roomId: roomId ? String(roomId) : null,
+    messageCount: messages.length,
+    topicsCount: payload.topics.length,
+    actionItemsCount: payload.actionItems.length,
+  });
 
   return ConversationInsight.findOneAndUpdate(
     { scopeKey: buildScopeKey(scopeType, scopeId, userId) },

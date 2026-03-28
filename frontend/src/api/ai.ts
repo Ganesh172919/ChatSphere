@@ -22,8 +22,15 @@ export interface GrammarResult {
   suggestions: string[];
 }
 
-export async function fetchAvailableModels(): Promise<{ models: AIModel[]; defaultModelId: string }> {
-  const { data } = await api.get<{ models: AIModel[]; defaultModelId: string }>('/ai/models');
+export interface AvailableModelsResponse {
+  models: AIModel[];
+  defaultModelId: string;
+  hasConfiguredModels?: boolean;
+  emptyStateMessage?: string;
+}
+
+export async function fetchAvailableModels(): Promise<AvailableModelsResponse> {
+  const { data } = await api.get<AvailableModelsResponse>('/ai/models');
   return data;
 }
 

@@ -106,6 +106,7 @@ router.post('/', authMiddleware, async (req, res) => {
 // POST /api/rooms/:id/join
 router.post('/:id/join', authMiddleware, async (req, res) => {
   try {
+    console.log(`→ [ROOM] ${req.user.username} requested HTTP join for room ${req.params.id}`);
     if (!isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: 'Invalid room ID' });
     }
@@ -130,7 +131,11 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
     }
 
     const messageCount = await Message.countDocuments({ roomId: room._id });
-    res.json(formatRoomSummary(room.toObject(), req.user.id, messageCount));
+    console.log(`✦ [ROOM] ${req.user.username} ${existingMember ? 'already belongs to' : 'joined'} room ${room._id}`);
+    res.json({
+      ...formatRoomSummary(room.toObject(), req.user.id, messageCount),
+      alreadyMember: Boolean(existingMember),
+    });
   } catch (err) {
     console.error('Join room error:', err);
     res.status(500).json({ error: 'Failed to join room' });

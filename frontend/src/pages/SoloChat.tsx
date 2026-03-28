@@ -25,6 +25,7 @@ export default function SoloChat() {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
+  const [emptyModelMessage, setEmptyModelMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -57,6 +58,7 @@ export default function SoloChat() {
       try {
         const result = await fetchAvailableModels();
         setAvailableModels(result.models);
+        setEmptyModelMessage(result.emptyStateMessage || '');
 
         const stored = localStorage.getItem(SOLO_MODEL_STORAGE_KEY);
         const nextModelId = result.models.some((model) => model.id === stored)
@@ -67,6 +69,7 @@ export default function SoloChat() {
         console.error('Failed to load AI models', error);
         setAvailableModels([]);
         setSelectedModelId('');
+        setEmptyModelMessage('No AI models are configured. Add provider API keys in backend/.env.');
       } finally {
         setLoadingModels(false);
       }
@@ -106,6 +109,11 @@ export default function SoloChat() {
 
   const handleSubmit = async () => {
     if ((!input.trim() && !selectedFile) || isLoading) {
+      return;
+    }
+
+    if (!loadingModels && availableModels.length === 0) {
+      toast.error(emptyModelMessage || 'No AI models are configured. Add provider API keys in backend/.env.');
       return;
     }
 
@@ -193,6 +201,9 @@ export default function SoloChat() {
                 disabled={loadingModels || availableModels.length === 0}
                 className="bg-transparent text-[10px] font-medium text-gray-400 focus:outline-none"
               >
+                {availableModels.length === 0 ? (
+                  <option value="">No AI models configured</option>
+                ) : null}
                 {availableModels.map((model) => (
                   <option key={model.id} value={model.id} className="bg-navy-900 text-gray-200">
                     {model.label} ({model.provider})
@@ -281,7 +292,11 @@ export default function SoloChat() {
 
                   <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-gray-500">
                     <div className="truncate">
-                      {activeModel ? `Routing through ${activeModel.label} via ${activeModel.provider}` : 'Loading models...'}
+                      {loadingModels
+                        ? 'Loading models...'
+                        : activeModel
+                          ? `Routing through ${activeModel.label} via ${activeModel.provider}`
+                          : (emptyModelMessage || 'No AI models are configured.')}
                     </div>
                     <div>{selectedFile ? 'File will be included in the prompt' : 'No file attached'}</div>
                   </div>

@@ -6,6 +6,7 @@ const { retrieveRelevantMemories, markMemoriesUsed, upsertMemoryEntries } = requ
 const { getConversationInsight, refreshConversationInsight } = require('../services/conversationInsights');
 const { validateAttachmentPayload } = require('../services/messageFormatting');
 const Conversation = require('../models/Conversation');
+const logger = require('../helpers/logger');
 
 const router = express.Router();
 
@@ -89,7 +90,17 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       markMemoriesUsed(memoryEntries),
     ]);
 
-    const insight = await refreshConversationInsight(req.user.id, conversation._id);
+    let insight = null;
+    try {
+      insight = await refreshConversationInsight(req.user.id, conversation._id);
+    } catch (insightError) {
+      logger.warn('CHAT_INSIGHT_REFRESH_FAILED', 'Chat response succeeded but insight refresh failed', {
+        requestId: req.requestId,
+        userId: req.user.id,
+        conversationId: conversation._id.toString(),
+        error: logger.serializeError(insightError),
+      });
+    }
 
     res.json({
       conversationId: conversation._id.toString(),
@@ -102,8 +113,28 @@ router.post('/', authMiddleware, aiQuotaMiddleware, async (req, res) => {
       provider: response.model.provider,
     });
   } catch (err) {
-    console.error('Chat error:', err);
-    res.status(500).json({ error: 'Failed to get AI response. Please try again.' });
+    logger.error('CHAT_REQUEST_FAILED', 'Failed to complete chat request', {
+      requestId: req.requestId,
+      userId: req.user?.id || null,
+      conversationId: req.body?.conversationId || null,
+      modelId: req.body?.modelId || null,
+      error: logger.serializeError(err),
+    });
+
+    const statusCode = err?.statusCode === 429 ? 429 : String(err?.code || '').startsWith('AI_') ? 503 : 500;
+    const errorMessage = statusCode === 429
+      ? 'The selected AI provider is rate-limited right now. Please retry in a moment.'
+      : statusCode === 503
+        ? 'AI providers are temporarily unavailable. Please try again shortly or choose a different model.'
+        : 'Failed to get AI response. Please try again.';
+
+    res.status(statusCode).json({
+      error: errorMessage,
+      modelId: err?.model?.id || null,
+      provider: err?.model?.provider || null,
+      retryAfterMs: err?.retryAfterMs || null,
+      requestId: req.requestId,
+    });
   }
 });
 

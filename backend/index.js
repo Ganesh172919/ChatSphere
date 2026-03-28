@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const { Server } = require('socket.io');
 const passport = require('passport');
+const logger = require('./helpers/logger');
 
 // Database
 const connectDB = require('./config/db');
@@ -44,7 +45,7 @@ const User = require('./models/User');
 const { isValidObjectId, findRoomMember, hasRoomRole } = require('./helpers/validate');
 
 // Services
-const { sendGroupMessage } = require('./services/gemini');
+const { sendGroupMessage, getAvailableModels, resolveModel } = require('./services/gemini');
 const { consumeAiQuota } = require('./services/aiQuota');
 const { getRoomInsight, refreshRoomInsight } = require('./services/conversationInsights');
 const { formatMessage: sharedFormatMessage, validateAttachmentPayload: sharedValidateAttachmentPayload } = require('./services/messageFormatting');
@@ -65,6 +66,32 @@ app.use(cors({
 
 app.use(express.json({ limit: '5mb' }));
 app.use(passport.initialize());
+
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  const requestId = logger.createRequestId();
+  req.requestId = requestId;
+  res.locals.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+
+  logger.info('API_REQUEST_START', 'Incoming request', logger.buildRequestSummary(req));
+
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    const userLabel = req.user?.username || req.user?.email || 'guest';
+    logger.info('API_REQUEST_END', 'Completed request', {
+      requestId,
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: res.statusCode,
+      durationMs: duration,
+      user: userLabel,
+    });
+    console.log(`→ [API] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms — ${userLabel}`);
+  });
+
+  next();
+});
 
 // Apply general rate limiter to all API routes
 app.use('/api', apiLimiter);
@@ -136,9 +163,10 @@ function getAck(callback) {
   return typeof callback === 'function' ? callback : () => {};
 }
 
-function emitSocketError(socket, ack, error) {
-  socket.emit('error_message', { error });
-  ack({ success: false, error });
+function emitSocketError(socket, ack, error, details = {}) {
+  const payload = { success: false, error, ...details };
+  socket.emit('error_message', payload);
+  ack(payload);
 }
 
 function isFlooded(socket, ack) {
@@ -289,7 +317,7 @@ async function maybeMarkMessageDelivered(message, roomId) {
 // -- Socket.IO connection handler --
 
 io.on('connection', async (socket) => {
-  console.log(`User connected: ${socket.user.username} (${socket.id})`);
+  console.log(`✦ [SOCKET] User connected: ${socket.user.username} (${socket.id})`);
 
   // Track global online status
   globalOnlineUsers.set(socket.user.id, { socketId: socket.id, username: socket.user.username });
@@ -324,8 +352,10 @@ io.on('connection', async (socket) => {
     if (isFlooded(socket, ack)) return;
 
     try {
+      console.log(`→ [ROOM] ${socket.user.username} requested join_room for ${roomId}`);
       const { room, error } = await loadRoomForMember(roomId, socket.user.id, 'members');
       if (error) {
+        console.warn(`⚠ [ROOM] join_room denied for ${socket.user.username}: ${error}`);
         return emitSocketError(socket, ack, error);
       }
 
@@ -357,9 +387,10 @@ io.on('connection', async (socket) => {
         );
       }
 
+      console.log(`✦ [ROOM] ${socket.user.username} joined room ${roomId}`);
       ack({ success: true, roomId });
     } catch (err) {
-      console.error('Join room error:', err);
+      console.error(`✗ [ROOM] join_room failed for ${socket.user.username}:`, err.stack || err.message);
       emitSocketError(socket, ack, 'Failed to join room');
     }
   });
@@ -693,6 +724,7 @@ io.on('connection', async (socket) => {
   socket.on('trigger_ai', async ({ roomId, prompt, modelId, attachment }, callback) => {
     const ack = getAck(callback);
     if (isFlooded(socket, ack)) return;
+    const requestedModel = resolveModel(modelId);
 
     if (!prompt || prompt.trim().length === 0) return emitSocketError(socket, ack, 'Prompt is required');
     if (prompt.trim().length > 4000) return emitSocketError(socket, ack, 'Prompt must be under 4000 characters');
@@ -735,6 +767,8 @@ io.on('connection', async (socket) => {
         sourceRoomId: roomId,
       });
 
+      console.log(`→ [AI] Trigger from ${socket.user.username} in room ${room.name} using ${requestedModel?.id || 'fallback/offline'} via ${requestedModel?.provider || 'fallback'}`);
+
       const response = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username, {
         memoryEntries,
         insight,
@@ -775,12 +809,14 @@ io.on('connection', async (socket) => {
       await markMemoriesUsed(memoryEntries);
       await refreshRoomInsight(roomId);
 
+      console.log(`✦ [AI] Room response ready from ${response.model.id} via ${response.model.provider} (${response.content.length} chars)`);
       io.to(roomId).emit('ai_thinking', { roomId, status: false });
       const aiMessage = formatMessage(aiMsg);
       io.to(roomId).emit('ai_response', aiMessage);
       ack({ success: true, message: aiMessage });
     } catch (err) {
-      console.error('AI trigger error:', err);
+      const failedModel = err?.model || requestedModel;
+      console.error(`✗ [AI] trigger_ai failed for ${socket.user.username} with ${failedModel?.id || 'fallback/offline'} via ${failedModel?.provider || 'fallback'}:`, err.stack || err.message);
       io.to(roomId).emit('ai_thinking', { roomId, status: false });
 
       const errorMsg = new Message({
@@ -795,7 +831,10 @@ io.on('connection', async (socket) => {
       });
       await errorMsg.save();
       io.to(roomId).emit('ai_response', formatMessage(errorMsg));
-      emitSocketError(socket, ack, 'AI request failed');
+      emitSocketError(socket, ack, 'AI request failed', {
+        modelId: failedModel?.id || null,
+        provider: failedModel?.provider || null,
+      });
     }
   });
 
@@ -1016,7 +1055,7 @@ io.on('connection', async (socket) => {
 
   // -- disconnect --
   socket.on('disconnect', async () => {
-    console.log(`User disconnected: ${socket.user.username} (${socket.id})`);
+    console.log(`→ [SOCKET] User disconnected: ${socket.user.username} (${socket.id})`);
 
     // Clean flood tracking
     socketFlood.delete(socket.id);
@@ -1056,6 +1095,7 @@ const PORT = process.env.PORT || 3000;
 
 async function startServer() {
   await connectDB();
+  const configuredModels = getAvailableModels({ includeFallback: false });
 
   server.listen(PORT, () => {
     console.log(`\n✦ ChatSphere server running on port ${PORT}`);
@@ -1063,6 +1103,14 @@ async function startServer() {
     console.log(`  → Socket:   ws://localhost:${PORT}`);
     console.log(`  → Client:   ${CLIENT_URL}`);
     console.log(`  → Database: MongoDB`);
+    if (configuredModels.length === 0) {
+      console.log('⚠ [AI] No provider-backed AI models are configured. Add API keys in backend/.env');
+    } else {
+      console.log('→ [AI] Available models loaded:');
+      configuredModels.forEach((model, index) => {
+        console.log(`  ${index + 1}. ${model.id} (${model.provider})`);
+      });
+    }
     console.log();
   });
 }

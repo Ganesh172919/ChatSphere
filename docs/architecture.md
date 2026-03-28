@@ -6,7 +6,7 @@ ChatSphere now has one backend runtime path:
 
 - `backend/index.js` boots the Express API, Socket.IO server, Passport config, and MongoDB connection.
 - The data layer uses MongoDB with Mongoose models from `backend/models`.
-- The old TypeScript + Prisma backend path is not part of the active runtime and should not be used for local development.
+- There is no second database runtime to keep in sync. MongoDB is the only supported persistence path.
 
 For local work, think in terms of:
 

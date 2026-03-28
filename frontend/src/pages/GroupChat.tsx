@@ -55,6 +55,8 @@ export default function GroupChat() {
   const [availableModels, setAvailableModels] = useState<AIModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [loadingModels, setLoadingModels] = useState(true);
+  const [emptyModelMessage, setEmptyModelMessage] = useState('');
+  const [roomConnectionError, setRoomConnectionError] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +98,7 @@ export default function GroupChat() {
       try {
         const result = await fetchAvailableModels();
         setAvailableModels(result.models);
+        setEmptyModelMessage(result.emptyStateMessage || '');
         const stored = localStorage.getItem(GROUP_MODEL_STORAGE_KEY);
         const nextModelId = result.models.some((model) => model.id === stored)
           ? String(stored)
@@ -105,6 +108,7 @@ export default function GroupChat() {
         console.error('Failed to load group AI models', error);
         setAvailableModels([]);
         setSelectedModelId('');
+        setEmptyModelMessage('No AI models are configured. Add provider API keys in backend/.env.');
       } finally {
         setLoadingModels(false);
       }
@@ -125,8 +129,21 @@ export default function GroupChat() {
 
     const loadRoom = async () => {
       try {
-        await joinRoomById(roomId);
-        const room = await fetchRoomById(roomId);
+        let room;
+
+        try {
+          room = await fetchRoomById(roomId);
+        } catch (err: unknown) {
+          const accessError = err as { response?: { status?: number; data?: { error?: string } } };
+
+          if (accessError.response?.status !== 403) {
+            throw err;
+          }
+
+          await joinRoomById(roomId);
+          room = await fetchRoomById(roomId);
+        }
+
         setCurrentRoom(room);
         setRoomInsight(room.insight || null);
       } catch (err: unknown) {
@@ -206,18 +223,42 @@ export default function GroupChat() {
 
   // Join room via socket
   useEffect(() => {
-    if (!roomId || !socket) return;
+    if (!roomId || !socket || !currentRoom || currentRoom.id !== roomId) return;
 
-    void joinRoom(roomId).then((response) => {
-      if (!response.success) {
-        toast.error(response.error || 'Failed to connect to the room');
+    let cancelled = false;
+
+    const connectToRoom = async () => {
+      setRoomConnectionError('');
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await joinRoom(roomId);
+        if (response.success) {
+          if (!cancelled) {
+            setRoomConnectionError('');
+          }
+          return;
+        }
+
+        if (attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
+
+        if (!cancelled) {
+          const nextError = String(response.error || 'Failed to connect to the room');
+          setRoomConnectionError(nextError);
+          toast.error(nextError);
+        }
       }
-    });
+    };
+
+    void connectToRoom();
 
     return () => {
+      cancelled = true;
       void leaveRoom(roomId);
     };
-  }, [roomId, socket, joinRoom, leaveRoom]);
+  }, [roomId, socket, currentRoom, joinRoom, leaveRoom]);
 
   // Socket event listeners
   useEffect(() => {
@@ -397,6 +438,12 @@ export default function GroupChat() {
       }
 
       if (shouldTriggerAi) {
+        if (!loadingModels && availableModels.length === 0) {
+          toast.error(emptyModelMessage || 'No AI models are configured. Add provider API keys in backend/.env to use @ai.');
+          clearComposer();
+          return;
+        }
+
         const aiResult = await triggerAi(
           roomId,
           aiPrompt || `Review the attached file "${pendingFile?.name || 'attachment'}".`,
@@ -609,6 +656,32 @@ export default function GroupChat() {
             </button>
           </div>
 
+          {(roomConnectionError || (!loadingModels && availableModels.length === 0)) && (
+            <div className="border-b border-navy-800/50 bg-navy-800/80 px-4 py-2 text-xs text-amber-300">
+              <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+                <span className="min-w-0 truncate">
+                  {roomConnectionError || emptyModelMessage || 'No AI models are configured. Add provider API keys in backend/.env.'}
+                </span>
+                {roomConnectionError ? (
+                  <button
+                    onClick={() => {
+                      setRoomConnectionError('');
+                      void joinRoom(roomId || '').then((response) => {
+                        if (!response.success) {
+                          setRoomConnectionError(String(response.error || 'Failed to connect to the room'));
+                        }
+                      });
+                    }}
+                    className="rounded-lg border border-amber-400/30 px-2 py-1 text-[11px] font-medium text-amber-200 transition-colors hover:bg-amber-400/10"
+                    type="button"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          )}
+
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-2 py-4" role="log" aria-live="polite">
             <div className="max-w-3xl mx-auto space-y-1">
@@ -760,7 +833,11 @@ export default function GroupChat() {
               )}
               <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-[11px] text-gray-500">
                 <div className="truncate">
-                  {activeModel ? `Room AI: ${activeModel.label} via ${activeModel.provider}` : 'Loading room AI models...'}
+                  {loadingModels
+                    ? 'Loading room AI models...'
+                    : activeModel
+                      ? `Room AI: ${activeModel.label} via ${activeModel.provider}`
+                      : (emptyModelMessage || 'No AI models are configured.')}
                 </div>
                 <select
                   value={selectedModelId}
@@ -768,6 +845,9 @@ export default function GroupChat() {
                   disabled={loadingModels || availableModels.length === 0}
                   className="rounded-lg border border-navy-700/50 bg-navy-800 px-2.5 py-1 text-[11px] text-gray-300 focus:outline-none"
                 >
+                  {availableModels.length === 0 ? (
+                    <option value="">No AI models configured</option>
+                  ) : null}
                   {availableModels.map((model) => (
                     <option key={model.id} value={model.id}>
                       {model.label} ({model.provider})

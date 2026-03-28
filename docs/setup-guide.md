@@ -5,7 +5,7 @@ This guide matches the current codebase. ChatSphere runs locally with:
 - Frontend: React + TypeScript + Vite
 - Backend: Express + Socket.IO + MongoDB + Mongoose
 - No Docker
-- No Prisma runtime
+- One active backend runtime backed by MongoDB only
 
 ## Prerequisites
 
@@ -41,15 +41,21 @@ Fill `backend/.env`:
 MONGO_URI=mongodb://localhost:27017/chatsphere
 JWT_ACCESS_SECRET=replace_with_a_long_random_string
 JWT_REFRESH_SECRET=replace_with_a_different_long_random_string
+DEFAULT_AI_MODEL=openai/gpt-4o-mini
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini
+OPENROUTER_MODELS=openai/gpt-4o-mini=GPT-4o mini,anthropic/claude-3.5-sonnet=Claude 3.5 Sonnet,google/gemini-2.0-flash-001=Gemini 2.0 Flash,x-ai/grok-2-1212=Grok 2
 CLIENT_URL=http://localhost:5173
 PORT=3000
 
 # Optional direct-provider fallbacks
 GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODELS=gemini-2.0-flash=Gemini 2.0 Flash,gemini-2.5-pro=Gemini 2.5 Pro
 GROK_API_KEY=
+GROK_MODEL=grok-2-latest
 HUGGINGFACE_API_KEY=
+HUGGINGFACE_MODEL=meta-llama/Llama-3.1-8B-Instruct:cerebras
 
 # Optional Google OAuth
 GOOGLE_CLIENT_ID=
@@ -78,6 +84,7 @@ Expected local behavior:
 - The backend connects to MongoDB.
 - File uploads are stored in `backend/uploads`.
 - The AI model picker is populated from the configured provider keys.
+- If no provider keys are configured, the frontend shows a clear AI configuration warning instead of an empty selector.
 - If SMTP is missing, password reset links are printed to the backend console.
 - If Google OAuth is missing, the app still runs; Google sign-in just shows a friendly local-setup error.
 

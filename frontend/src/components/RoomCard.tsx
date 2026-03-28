@@ -10,7 +10,7 @@ interface Props {
   memberCount?: number;
   isMember?: boolean;
   isJoining?: boolean;
-  onJoin: (id: string) => void;
+  onJoin: (id: string, isMember: boolean) => void;
   index?: number;
 }
 
@@ -33,7 +33,7 @@ export default function RoomCard({
       transition={{ delay: index * 0.08, duration: 0.4 }}
       whileHover={{ scale: 1.02, y: -4 }}
       className="group relative bg-navy-800 rounded-2xl border border-navy-700/50 overflow-hidden hover:border-neon-purple/30 transition-all duration-300 cursor-pointer"
-      onClick={() => onJoin(id)}
+      onClick={() => onJoin(id, isMember)}
     >
       {/* Glow effect on hover */}
       <div className="absolute inset-0 bg-gradient-to-br from-neon-purple/5 to-neon-blue/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />

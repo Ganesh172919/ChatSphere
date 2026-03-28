@@ -10,6 +10,7 @@ const {
   resolveModel,
 } = require('../services/gemini');
 const { getPromptTemplate } = require('../services/promptCatalog');
+const logger = require('../helpers/logger');
 
 const router = express.Router();
 
@@ -19,18 +20,30 @@ async function loadAiPreferences(userId) {
     .lean();
 }
 
+function buildSmartReplyFallback(messages) {
+  const lastMessage = messages[messages.length - 1]?.content || '';
+  if (/\?$/.test(lastMessage.trim())) {
+    return ['Yes, that works for me.', 'Let me check and get back to you.', 'Can you share a bit more detail?'];
+  }
+
+  return ['Sounds good.', 'Thanks for the update.', 'Let\'s do that.'];
+}
+
 router.get('/models', authMiddleware, async (req, res) => {
   try {
-    const models = getAvailableModels().map((model) => ({
+    const models = getAvailableModels({ includeFallback: false }).map((model) => ({
       id: model.id,
       label: model.label,
       provider: model.provider,
       supportsFiles: Boolean(model.supportsFiles),
     }));
+    const defaultModel = resolveModel(MODEL_NAME, { includeFallback: false });
 
     res.json({
       models,
-      defaultModelId: resolveModel(MODEL_NAME).id,
+      defaultModelId: defaultModel?.id || '',
+      hasConfiguredModels: models.length > 0,
+      emptyStateMessage: models.length > 0 ? '' : 'No AI models are configured. Add provider API keys in backend/.env.',
     });
   } catch (err) {
     console.error('List AI models error:', err);
@@ -57,11 +70,22 @@ router.post('/smart-replies', authMiddleware, aiLimiter, aiQuotaMiddleware, asyn
       .join('\n');
 
     const template = await getPromptTemplate('smart-replies');
-    const suggestions = await getJsonFromModel([
-      template?.content || 'Generate exactly 3 short quick replies in a JSON array. Keep them natural and useful.',
-      `Context: ${context || 'General chat'}`,
-      `Recent conversation:\n${recentMessages}`,
-    ].join('\n\n'), ['Got it!', 'That makes sense', 'Tell me more?'], { modelId });
+    let suggestions = ['Got it!', 'That makes sense', 'Tell me more?'];
+    try {
+      suggestions = await getJsonFromModel([
+        template?.content || 'Generate exactly 3 short quick replies in a JSON array. Keep them natural and useful.',
+        `Context: ${context || 'General chat'}`,
+        `Recent conversation:\n${recentMessages}`,
+      ].join('\n\n'), buildSmartReplyFallback(messages), { modelId });
+    } catch (error) {
+      logger.warn('SMART_REPLIES_FALLBACK', 'Using deterministic smart replies fallback', {
+        requestId: req.requestId,
+        userId: req.user.id,
+        modelId: modelId || MODEL_NAME,
+        error: logger.serializeError(error),
+      });
+      suggestions = buildSmartReplyFallback(messages);
+    }
 
     const normalized = (Array.isArray(suggestions) ? suggestions : [])
       .map((item) => String(item).trim())
@@ -74,8 +98,12 @@ router.post('/smart-replies', authMiddleware, aiLimiter, aiQuotaMiddleware, asyn
 
     res.json({ suggestions: normalized, model: resolveModel(modelId || MODEL_NAME).id });
   } catch (err) {
-    console.error('Smart replies error:', err);
-    res.status(500).json({ error: 'Failed to generate suggestions' });
+    logger.error('SMART_REPLIES_FAILED', 'Failed to generate smart replies', {
+      requestId: req.requestId,
+      userId: req.user?.id || null,
+      error: logger.serializeError(err),
+    });
+    res.status(500).json({ error: 'Failed to generate suggestions', requestId: req.requestId });
   }
 });
 
@@ -93,11 +121,21 @@ router.post('/sentiment', authMiddleware, aiLimiter, aiQuotaMiddleware, async (r
     }
 
     const template = await getPromptTemplate('sentiment');
-    const result = await getJsonFromModel([
-      template?.content || 'Return only JSON with sentiment, confidence, and emoji.',
-      'Allowed sentiments: positive, negative, neutral, excited, confused, angry.',
-      `Message: "${text.slice(0, 500)}"`,
-    ].join('\n\n'), { sentiment: 'neutral', confidence: 0.5, emoji: ':|' }, { modelId });
+    let result = { sentiment: 'neutral', confidence: 0.5, emoji: ':|' };
+    try {
+      result = await getJsonFromModel([
+        template?.content || 'Return only JSON with sentiment, confidence, and emoji.',
+        'Allowed sentiments: positive, negative, neutral, excited, confused, angry.',
+        `Message: "${text.slice(0, 500)}"`,
+      ].join('\n\n'), { sentiment: 'neutral', confidence: 0.5, emoji: ':|' }, { modelId });
+    } catch (error) {
+      logger.warn('SENTIMENT_FALLBACK', 'Using neutral sentiment fallback', {
+        requestId: req.requestId,
+        userId: req.user.id,
+        modelId: modelId || MODEL_NAME,
+        error: logger.serializeError(error),
+      });
+    }
 
     res.json({
       sentiment: String(result.sentiment || 'neutral'),
@@ -106,8 +144,12 @@ router.post('/sentiment', authMiddleware, aiLimiter, aiQuotaMiddleware, async (r
       model: resolveModel(modelId || MODEL_NAME).id,
     });
   } catch (err) {
-    console.error('Sentiment analysis error:', err);
-    res.status(500).json({ error: 'Failed to analyze sentiment' });
+    logger.error('SENTIMENT_FAILED', 'Failed to analyze sentiment', {
+      requestId: req.requestId,
+      userId: req.user?.id || null,
+      error: logger.serializeError(err),
+    });
+    res.status(500).json({ error: 'Failed to analyze sentiment', requestId: req.requestId });
   }
 });
 
@@ -125,10 +167,21 @@ router.post('/grammar', authMiddleware, aiLimiter, aiQuotaMiddleware, async (req
     }
 
     const template = await getPromptTemplate('grammar');
-    const result = await getJsonFromModel([
-      template?.content || 'Return only JSON with corrected text and suggestions.',
-      `Message: "${text.slice(0, 500)}"`,
-    ].join('\n\n'), { corrected: null, suggestions: [] }, { modelId });
+    let result = { corrected: null, suggestions: [] };
+    try {
+      result = await getJsonFromModel([
+        template?.content || 'Return only JSON with corrected text and suggestions.',
+        `Message: "${text.slice(0, 500)}"`,
+      ].join('\n\n'), { corrected: null, suggestions: [] }, { modelId });
+    } catch (error) {
+      logger.warn('GRAMMAR_FALLBACK', 'Using grammar fallback response', {
+        requestId: req.requestId,
+        userId: req.user.id,
+        modelId: modelId || MODEL_NAME,
+        error: logger.serializeError(error),
+      });
+      result = { corrected: text, suggestions: [] };
+    }
 
     res.json({
       corrected: result.corrected ? String(result.corrected) : null,
@@ -138,8 +191,12 @@ router.post('/grammar', authMiddleware, aiLimiter, aiQuotaMiddleware, async (req
       model: resolveModel(modelId || MODEL_NAME).id,
     });
   } catch (err) {
-    console.error('Grammar check error:', err);
-    res.status(500).json({ error: 'Failed to check grammar' });
+    logger.error('GRAMMAR_FAILED', 'Failed to check grammar', {
+      requestId: req.requestId,
+      userId: req.user?.id || null,
+      error: logger.serializeError(err),
+    });
+    res.status(500).json({ error: 'Failed to check grammar', requestId: req.requestId });
   }
 });
 

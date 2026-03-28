@@ -46,7 +46,12 @@ export default function Rooms() {
     }
   };
 
-  const handleJoinRoom = async (roomId: string) => {
+  const handleJoinRoom = async (roomId: string, isMember = false) => {
+    if (isMember) {
+      navigate(`/group/${roomId}`);
+      return;
+    }
+
     setJoiningRoomId(roomId);
     try {
       await joinRoomById(roomId);
@@ -145,7 +150,7 @@ export default function Rooms() {
                 memberCount={room.memberCount}
                 isMember={room.isMember}
                 isJoining={joiningRoomId === room.id}
-                onJoin={(id) => void handleJoinRoom(id)}
+                onJoin={(id, memberState) => void handleJoinRoom(id, memberState)}
                 index={i}
               />
             ))}

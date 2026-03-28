@@ -6,6 +6,16 @@ import toast from 'react-hot-toast';
 import { exchangeGoogleCode } from '../api/auth';
 import { useAuthStore } from '../store/authStore';
 
+const googleExchangeRequests = new Map<string, ReturnType<typeof exchangeGoogleCode>>();
+
+function getGoogleExchangeRequest(code: string) {
+  if (!googleExchangeRequests.has(code)) {
+    googleExchangeRequests.set(code, exchangeGoogleCode(code));
+  }
+
+  return googleExchangeRequests.get(code)!;
+}
+
 export default function GoogleCallback() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -30,7 +40,7 @@ export default function GoogleCallback() {
 
     const completeGoogleLogin = async () => {
       try {
-        const data = await exchangeGoogleCode(code);
+        const data = await getGoogleExchangeRequest(code);
         if (!isActive) {
           return;
         }
