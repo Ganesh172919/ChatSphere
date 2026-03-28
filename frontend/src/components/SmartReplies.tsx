@@ -8,18 +8,24 @@ interface Props {
   context?: string;
   onSelect: (reply: string) => void;
   enabled?: boolean;
+  modelId?: string;
 }
 
-export default function SmartReplies({ messages, context, onSelect, enabled = true }: Props) {
+export default function SmartReplies({ messages, context, onSelect, enabled = true, modelId }: Props) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const requestKey = JSON.stringify({
+    context: context || '',
+    modelId: modelId || '',
+    messages: messages.slice(-6),
+  });
 
   const fetchSuggestions = async () => {
-    if (!enabled || messages.length === 0) return;
+    if (!enabled || messages.length === 0 || isLoading) return;
     setIsLoading(true);
     try {
-      const result = await getSmartReplies(messages, context);
+      const result = await getSmartReplies(messages, context, modelId);
       setSuggestions(result.suggestions);
       setIsVisible(true);
     } catch {
@@ -46,7 +52,7 @@ export default function SmartReplies({ messages, context, onSelect, enabled = tr
     const timeout = setTimeout(fetchSuggestions, 800);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, enabled]);
+  }, [requestKey, enabled]);
 
   const handleSelect = (reply: string) => {
     onSelect(reply);

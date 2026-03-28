@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Hash, X, Pin, BarChart3, Shield, Paperclip, Loader2 } from 'lucide-react';
+import { Send, ArrowLeft, Hash, X, Pin, BarChart3, Shield, Paperclip, Loader2, Copy, Crown, UserRoundCheck } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import MessageBubble from '../components/MessageBubble';
 import TypingIndicator from '../components/TypingIndicator';
@@ -13,6 +13,7 @@ import { CreatePollModal, PollCard } from '../components/PollComponents';
 import MemberManagement from '../components/MemberManagement';
 import GrammarSuggestion from '../components/GrammarSuggestion';
 import { analyzeSentiment, fetchAvailableModels, type AIModel } from '../api/ai';
+import { fetchMembers, type GroupMember } from '../api/groups';
 import { fetchSettings } from '../api/settings';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
@@ -22,6 +23,7 @@ import type { GroupMessage } from '../api/rooms';
 import type { Poll } from '../api/polls';
 import type { ConversationInsight } from '../types/chat';
 import { closePoll, fetchPolls, votePoll } from '../api/polls';
+import { getModelGroups } from '../utils/aiModels';
 import toast from 'react-hot-toast';
 
 interface TypingUser {
@@ -57,14 +59,19 @@ export default function GroupChat() {
   const [loadingModels, setLoadingModels] = useState(true);
   const [emptyModelMessage, setEmptyModelMessage] = useState('');
   const [roomConnectionError, setRoomConnectionError] = useState('');
+  const [members, setMembers] = useState<GroupMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sentimentPendingRef = useRef(new Set<string>());
 
   const canModerateMessages = currentRoom?.currentUserRole === 'creator'
     || currentRoom?.currentUserRole === 'admin'
     || currentRoom?.currentUserRole === 'moderator';
+  const canManageMembers = currentRoom?.currentUserRole === 'creator' || currentRoom?.currentUserRole === 'admin';
   const activeModel = availableModels.find((model) => model.id === selectedModelId) || availableModels[0] || null;
+  const groupedModels = getModelGroups(availableModels);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -74,12 +81,12 @@ export default function GroupChat() {
     if (!roomId) return;
 
     try {
-      const insight = await fetchRoomInsight(roomId);
+      const insight = await fetchRoomInsight(roomId, selectedModelId || activeModel?.id);
       setRoomInsight(insight);
     } catch {
       setRoomInsight(null);
     }
-  }, [roomId]);
+  }, [roomId, selectedModelId, activeModel?.id]);
 
   const loadPolls = useCallback(async () => {
     if (!roomId) return;
@@ -92,6 +99,20 @@ export default function GroupChat() {
     }
   }, [roomId]);
 
+  const loadMembers = useCallback(async () => {
+    if (!roomId) return;
+
+    setMembersLoading(true);
+    try {
+      const nextMembers = await fetchMembers(roomId);
+      setMembers(nextMembers);
+    } catch {
+      setMembers([]);
+    } finally {
+      setMembersLoading(false);
+    }
+  }, [roomId]);
+
   useEffect(() => {
     const loadModels = async () => {
       setLoadingModels(true);
@@ -100,9 +121,10 @@ export default function GroupChat() {
         setAvailableModels(result.models);
         setEmptyModelMessage(result.emptyStateMessage || '');
         const stored = localStorage.getItem(GROUP_MODEL_STORAGE_KEY);
+        const autoModelId = result.models.find((model) => model.id === 'auto')?.id || '';
         const nextModelId = result.models.some((model) => model.id === stored)
           ? String(stored)
-          : result.defaultModelId || result.models[0]?.id || '';
+          : result.defaultModelId || autoModelId || result.models[0]?.id || '';
         setSelectedModelId(nextModelId);
       } catch (error) {
         console.error('Failed to load group AI models', error);
@@ -162,7 +184,8 @@ export default function GroupChat() {
   useEffect(() => {
     void loadPolls();
     void loadRoomInsight();
-  }, [loadPolls, loadRoomInsight]);
+    void loadMembers();
+  }, [loadPolls, loadRoomInsight, loadMembers]);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -194,9 +217,15 @@ export default function GroupChat() {
 
     const loadSentiments = async () => {
       for (const message of candidates) {
+        if (sentimentPendingRef.current.has(message.id)) {
+          continue;
+        }
+
+        sentimentPendingRef.current.add(message.id);
         try {
           const sentiment = await analyzeSentiment(message.content, selectedModelId || activeModel?.id);
           if (cancelled) {
+            sentimentPendingRef.current.delete(message.id);
             return;
           }
 
@@ -210,6 +239,8 @@ export default function GroupChat() {
           }));
         } catch {
           return;
+        } finally {
+          sentimentPendingRef.current.delete(message.id);
         }
       }
     };
@@ -221,9 +252,21 @@ export default function GroupChat() {
     };
   }, [activeModel?.id, currentRoom, messageSentiments, selectedModelId, sentimentEnabled, user?.id]);
 
+  const handleCopyInviteLink = useCallback(async () => {
+    if (!roomId) return;
+
+    const inviteUrl = `${window.location.origin}/group/${roomId}`;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      toast.success('Invite link copied');
+    } catch {
+      toast.error('Failed to copy invite link');
+    }
+  }, [roomId]);
+
   // Join room via socket
   useEffect(() => {
-    if (!roomId || !socket || !currentRoom || currentRoom.id !== roomId) return;
+    if (!roomId || !socket || !currentRoom?.id || currentRoom.id !== roomId) return;
 
     let cancelled = false;
 
@@ -258,7 +301,7 @@ export default function GroupChat() {
       cancelled = true;
       void leaveRoom(roomId);
     };
-  }, [roomId, socket, currentRoom, joinRoom, leaveRoom]);
+  }, [roomId, socket, currentRoom?.id, joinRoom, leaveRoom]);
 
   // Socket event listeners
   useEffect(() => {
@@ -528,7 +571,7 @@ export default function GroupChat() {
 
     setInsightLoading(true);
     try {
-      const result = await runRoomAction(roomId, action);
+      const result = await runRoomAction(roomId, action, selectedModelId || activeModel?.id);
       setRoomInsight(result.insight);
     } catch {
       toast.error('Failed to refresh room insight');
@@ -609,8 +652,70 @@ export default function GroupChat() {
             className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
           >
             <Shield size={14} />
-            <span>Manage Members</span>
+            <span>{canManageMembers ? 'Manage Members' : 'View Members'}</span>
           </button>
+
+          {canManageMembers ? (
+            <button
+              onClick={() => void handleCopyInviteLink()}
+              className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
+            >
+              <Copy size={14} />
+              <span>Copy Invite Link</span>
+            </button>
+          ) : null}
+
+          <div className="mx-4 mt-4 rounded-2xl border border-navy-700/50 bg-navy-900/35 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-sm font-semibold text-white">Room Members</h3>
+                <p className="text-[11px] text-gray-500">
+                  {membersLoading ? 'Loading roster...' : `${members.length} members in this room`}
+                </p>
+              </div>
+              <UserRoundCheck size={16} className="text-neon-blue" />
+            </div>
+            <div className="space-y-2">
+              {membersLoading ? (
+                [1, 2, 3].map((item) => (
+                  <div key={item} className="h-10 rounded-xl bg-navy-800/60 animate-pulse" />
+                ))
+              ) : members.length === 0 ? (
+                <p className="text-xs text-gray-500">Members will appear here once the room roster loads.</p>
+              ) : (
+                members.slice(0, 6).map((member) => (
+                  <div key={member.userId} className="flex items-center justify-between gap-3 rounded-xl border border-navy-800/50 bg-navy-800/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-white">{member.displayName}</p>
+                      <p className="truncate text-[10px] text-gray-500">@{member.username}</p>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px]">
+                      {member.isCreator ? <Crown size={12} className="text-amber-400" /> : null}
+                      <span className={`rounded-full px-2 py-0.5 capitalize ${
+                        member.isCreator
+                          ? 'bg-amber-500/10 text-amber-300'
+                          : member.role === 'admin'
+                            ? 'bg-neon-blue/10 text-neon-blue'
+                            : member.role === 'moderator'
+                              ? 'bg-emerald-500/10 text-emerald-300'
+                              : 'bg-navy-700 text-gray-400'
+                      }`}>
+                        {member.isCreator ? 'owner' : member.role}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {!membersLoading && members.length > 6 ? (
+              <button
+                onClick={() => setShowMemberPanel(true)}
+                className="mt-3 text-xs text-neon-purple hover:text-purple-300 transition-colors"
+              >
+                View all {members.length} members →
+              </button>
+            ) : null}
+          </div>
 
           <div className="mx-4 mt-4">
             <ConversationInsightsPanel
@@ -781,6 +886,7 @@ export default function GroupChat() {
                 content: m.content,
               }))}
               context={`Group chat room: ${currentRoom.name}`}
+              modelId={selectedModelId || activeModel?.id}
               onSelect={(reply) => setInput(reply)}
             />
           )}
@@ -813,6 +919,7 @@ export default function GroupChat() {
                 text={input}
                 onAccept={(corrected) => setInput(corrected)}
                 enabled={true}
+                modelId={selectedModelId || activeModel?.id}
               />
               {selectedFile && (
                 <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-navy-700/50 bg-navy-800/60 px-3 py-2 text-xs text-gray-300">
@@ -839,6 +946,9 @@ export default function GroupChat() {
                       ? `Room AI: ${activeModel.label} via ${activeModel.provider}`
                       : (emptyModelMessage || 'No AI models are configured.')}
                 </div>
+                <div className="hidden sm:block">
+                  {availableModels.length > 0 ? `${availableModels.length} live models` : 'No live models'}
+                </div>
                 <select
                   value={selectedModelId}
                   onChange={(event) => setSelectedModelId(event.target.value)}
@@ -848,11 +958,15 @@ export default function GroupChat() {
                   {availableModels.length === 0 ? (
                     <option value="">No AI models configured</option>
                   ) : null}
-                  {availableModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label} ({model.provider})
-                    </option>
-                  ))}
+                {groupedModels.map((group) => (
+                  <optgroup key={group.provider} label={`${group.label} (${group.models.length})`}>
+                    {group.models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
                 </select>
               </div>
               <div className="flex items-end gap-3 bg-navy-800 rounded-2xl border border-navy-700/50 p-3 focus-within:border-neon-purple/30 transition-colors">

@@ -1,5 +1,10 @@
 import api from './axios';
 
+let availableModelsPromise: Promise<AvailableModelsResponse> | null = null;
+let availableModelsCache: AvailableModelsResponse | null = null;
+let availableModelsCacheAt = 0;
+const MODELS_CACHE_TTL_MS = 30 * 1000;
+
 export interface AIModel {
   id: string;
   label: string;
@@ -30,8 +35,24 @@ export interface AvailableModelsResponse {
 }
 
 export async function fetchAvailableModels(): Promise<AvailableModelsResponse> {
-  const { data } = await api.get<AvailableModelsResponse>('/ai/models');
-  return data;
+  const now = Date.now();
+  if (availableModelsCache && now - availableModelsCacheAt < MODELS_CACHE_TTL_MS) {
+    return availableModelsCache;
+  }
+
+  if (!availableModelsPromise) {
+    availableModelsPromise = api.get<AvailableModelsResponse>('/ai/models')
+      .then(({ data }) => {
+        availableModelsCache = data;
+        availableModelsCacheAt = Date.now();
+        return data;
+      })
+      .finally(() => {
+        availableModelsPromise = null;
+      });
+  }
+
+  return availableModelsPromise;
 }
 
 export async function getSmartReplies(

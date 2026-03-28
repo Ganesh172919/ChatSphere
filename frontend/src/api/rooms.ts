@@ -59,17 +59,21 @@ export async function fetchRoomById(id: string): Promise<RoomDetail> {
   return data;
 }
 
-export async function fetchRoomInsight(id: string): Promise<ConversationInsight> {
-  const { data } = await api.get<ConversationInsight>(`/rooms/${id}/insights`);
+export async function fetchRoomInsight(id: string, modelId?: string): Promise<ConversationInsight | null> {
+  const { data } = await api.get<ConversationInsight | null>(`/rooms/${id}/insights`, {
+    params: modelId ? { modelId } : undefined,
+  });
   return data;
 }
 
 export async function runRoomAction(
   id: string,
-  action: 'summarize' | 'extract-tasks' | 'extract-decisions'
+  action: 'summarize' | 'extract-tasks' | 'extract-decisions',
+  modelId?: string
 ): Promise<{ summary?: string; decisions?: string[]; actionItems?: ConversationInsight['actionItems']; insight: ConversationInsight }> {
   const { data } = await api.post<{ summary?: string; decisions?: string[]; actionItems?: ConversationInsight['actionItems']; insight: ConversationInsight }>(
-    `/rooms/${id}/actions/${action}`
+    `/rooms/${id}/actions/${action}`,
+    modelId ? { modelId } : {}
   );
   return data;
 }

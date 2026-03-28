@@ -1,9 +1,8 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { MessageSquare, Users, LogOut, Sparkles, Moon, Sun, LayoutDashboard, Search, User, Settings, Shield, Brain } from 'lucide-react';
+import { MessageSquare, Users, LogOut, Sparkles, LayoutDashboard, Search, User, Settings, Shield, Brain, FolderKanban } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { logoutUser } from '../api/auth';
-import { useTheme } from '../context/ThemeContext';
 import { useSocket } from '../hooks/useSocket';
 import toast from 'react-hot-toast';
 import { useState, useRef, useEffect } from 'react';
@@ -12,7 +11,6 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, refreshToken, logout, isAuthenticated } = useAuthStore();
-  const { theme, toggleTheme } = useTheme();
   const { disconnect } = useSocket();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -93,6 +91,18 @@ export default function Navbar() {
                 <span className="hidden sm:inline">Solo Chat</span>
               </Link>
               <Link
+                to="/projects"
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  isActive('/projects')
+                    ? 'bg-navy-700 text-white shadow-inner'
+                    : 'text-gray-400 hover:text-white hover:bg-navy-800'
+                }`}
+                aria-current={isActive('/projects') ? 'page' : undefined}
+              >
+                <FolderKanban size={16} />
+                <span className="hidden md:inline">Projects</span>
+              </Link>
+              <Link
                 to="/rooms"
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                   isActive('/rooms') || isActive('/group')
@@ -133,14 +143,6 @@ export default function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-navy-800 transition-all"
-              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-            >
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-
             {isAuthenticated && user && (
               <div className="relative" ref={menuRef}>
                 <button

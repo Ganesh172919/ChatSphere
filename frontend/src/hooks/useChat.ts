@@ -7,6 +7,7 @@ import {
   fetchConversationInsight,
   fetchConversations,
 } from '../api/conversations';
+import type { ProjectSummary } from '../api/projects';
 import { useChatStore } from '../store/chatStore';
 import type { Message } from '../store/chatStore';
 
@@ -14,7 +15,11 @@ function mapRole(role: string): 'user' | 'assistant' {
   return role === 'assistant' ? 'assistant' : 'user';
 }
 
-export function useChat() {
+function buildMessageId(role: string, timestamp: string, content: string) {
+  return `${role}:${timestamp}:${content.slice(0, 24)}`;
+}
+
+export function useChat(activeProject?: ProjectSummary | null) {
   const [isLoading, setIsLoading] = useState(false);
   const {
     addConversation,
@@ -25,18 +30,20 @@ export function useChat() {
     loadConversations,
     setActiveConversation,
     setConversationMessages,
+    updateMessage,
     updateConversationInsight,
     updateConversationServerId,
   } = useChatStore();
 
   const syncConversations = useCallback(async () => {
     try {
-      const summaries = await fetchConversations();
+      const summaries = await fetchConversations(activeProject?.id || undefined);
       loadConversations(summaries.map((summary) => ({
         id: summary.id,
         serverId: summary.id,
         title: summary.title,
         messages: [],
+        project: summary.project || null,
         createdAt: summary.createdAt,
         updatedAt: summary.updatedAt,
         sourceType: summary.sourceType,
@@ -46,7 +53,7 @@ export function useChat() {
     } catch (error) {
       console.error('Failed to sync conversations', error);
     }
-  }, [loadConversations]);
+  }, [activeProject?.id, loadConversations]);
 
   useEffect(() => {
     void syncConversations();
@@ -72,9 +79,11 @@ export function useChat() {
         }
 
         const messages: Message[] = detail.messages.map((message) => ({
+          id: buildMessageId(message.role, message.timestamp, message.content),
           role: mapRole(message.role),
           content: message.content,
           timestamp: message.timestamp,
+          messageState: 'complete',
           memoryRefs: message.memoryRefs || [],
           fileUrl: message.fileUrl || null,
           fileName: message.fileName || null,
@@ -82,6 +91,14 @@ export function useChat() {
           fileSize: message.fileSize || null,
           modelId: message.modelId || null,
           provider: message.provider || null,
+          requestedModelId: message.requestedModelId || null,
+          processingMs: message.processingMs ?? null,
+          promptTokens: message.promptTokens ?? null,
+          completionTokens: message.completionTokens ?? null,
+          totalTokens: message.totalTokens ?? null,
+          autoMode: Boolean(message.autoMode),
+          autoComplexity: message.autoComplexity || null,
+          fallbackUsed: Boolean(message.fallbackUsed),
         }));
 
         setConversationMessages(activeConversation.id, messages);
@@ -99,14 +116,23 @@ export function useChat() {
   }, [conversations, getActiveConversation, setConversationMessages, updateConversationInsight]);
 
   const sendMessage = useCallback(
-    async (content: string, options?: { modelId?: string; attachment?: ChatAttachment | null }) => {
+    async (
+      content: string,
+      options?: { modelId?: string; attachment?: ChatAttachment | null; project?: ProjectSummary | null }
+    ) => {
       let conversation = getActiveConversation();
+      const selectedProject = options?.project || activeProject || null;
 
       if (!conversation) {
         const newConversation = {
           id: crypto.randomUUID(),
           title: content.slice(0, 50) + (content.length > 50 ? '...' : ''),
           messages: [],
+          project: selectedProject ? {
+            id: selectedProject.id,
+            name: selectedProject.name,
+            description: selectedProject.description,
+          } : null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           insight: null,
@@ -120,9 +146,11 @@ export function useChat() {
         try {
           const detail = await fetchConversation(conversation.serverId);
           historySource = detail.messages.map((message) => ({
+            id: buildMessageId(message.role, message.timestamp, message.content),
             role: mapRole(message.role),
             content: message.content,
             timestamp: message.timestamp,
+            messageState: 'complete',
             memoryRefs: message.memoryRefs || [],
             fileUrl: message.fileUrl || null,
             fileName: message.fileName || null,
@@ -130,6 +158,14 @@ export function useChat() {
             fileSize: message.fileSize || null,
             modelId: message.modelId || null,
             provider: message.provider || null,
+            requestedModelId: message.requestedModelId || null,
+            processingMs: message.processingMs ?? null,
+            promptTokens: message.promptTokens ?? null,
+            completionTokens: message.completionTokens ?? null,
+            totalTokens: message.totalTokens ?? null,
+            autoMode: Boolean(message.autoMode),
+            autoComplexity: message.autoComplexity || null,
+            fallbackUsed: Boolean(message.fallbackUsed),
           }));
           setConversationMessages(conversation.id, historySource);
         } catch (error) {
@@ -138,9 +174,11 @@ export function useChat() {
       }
 
       const userMessage: Message = {
+        id: crypto.randomUUID(),
         role: 'user',
         content,
         timestamp: new Date().toISOString(),
+        messageState: 'complete',
         fileUrl: options?.attachment?.fileUrl || null,
         fileName: options?.attachment?.fileName || null,
         fileType: options?.attachment?.fileType || null,
@@ -148,6 +186,16 @@ export function useChat() {
       };
 
       addMessage(conversation.id, userMessage);
+      const assistantMessageId = crypto.randomUUID();
+      addMessage(conversation.id, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: 'Thinking...',
+        timestamp: new Date().toISOString(),
+        messageState: 'pending',
+        requestedModelId: options?.modelId || 'auto',
+        autoMode: !options?.modelId || options.modelId === 'auto',
+      });
       setIsLoading(true);
 
       try {
@@ -161,32 +209,39 @@ export function useChat() {
           history,
           conversation.serverId,
           options?.modelId,
-          options?.attachment || null
+          options?.attachment || null,
+          selectedProject?.id || conversation.project?.id || null
         );
 
         if (response.conversationId && !conversation.serverId) {
           updateConversationServerId(conversation.id, response.conversationId);
         }
 
-        const assistantMessage: Message = {
-          role: 'assistant',
+        updateMessage(conversation.id, assistantMessageId, {
           content: response.content,
           timestamp: response.timestamp,
+          messageState: 'complete',
           memoryRefs: response.memoryRefs || [],
           modelId: response.modelId || null,
           provider: response.provider || null,
-        };
-
-        addMessage(conversation.id, assistantMessage);
+          requestedModelId: response.requestedModelId || options?.modelId || null,
+          processingMs: response.processingMs ?? null,
+          promptTokens: response.promptTokens ?? null,
+          completionTokens: response.completionTokens ?? null,
+          totalTokens: response.totalTokens ?? null,
+          autoMode: Boolean(response.autoMode),
+          autoComplexity: response.autoComplexity || null,
+          fallbackUsed: Boolean(response.fallbackUsed),
+        });
         updateConversationInsight(conversation.id, response.insight || null);
       } catch (error: unknown) {
         const err = error as { response?: { data?: { error?: string } }; message?: string };
         const errMsg = err.response?.data?.error || err.message || 'Failed to get AI response';
         toast.error(errMsg);
-        addMessage(conversation.id, {
-          role: 'assistant',
+        updateMessage(conversation.id, assistantMessageId, {
           content: 'Sorry, I hit an error while processing your request. Please try again.',
           timestamp: new Date().toISOString(),
+          messageState: 'error',
         });
       } finally {
         setIsLoading(false);
@@ -195,8 +250,10 @@ export function useChat() {
     [
       addConversation,
       addMessage,
+      activeProject,
       getActiveConversation,
       setConversationMessages,
+      updateMessage,
       updateConversationInsight,
       updateConversationServerId,
     ]

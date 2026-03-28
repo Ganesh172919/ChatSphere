@@ -13,6 +13,7 @@ const GoogleCallback = lazy(() => import('./pages/GoogleCallback'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Projects = lazy(() => import('./pages/Projects'));
 const SoloChat = lazy(() => import('./pages/SoloChat'));
 const Rooms = lazy(() => import('./pages/Rooms'));
 const GroupChat = lazy(() => import('./pages/GroupChat'));
@@ -72,6 +73,14 @@ export default function App() {
               element={(
                 <ProtectedRoute>
                   <Dashboard />
+                </ProtectedRoute>
+              )}
+            />
+            <Route
+              path="/projects"
+              element={(
+                <ProtectedRoute>
+                  <Projects />
                 </ProtectedRoute>
               )}
             />

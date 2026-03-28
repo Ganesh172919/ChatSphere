@@ -23,6 +23,8 @@ export interface RecentRoom {
   description: string;
   tags: string[];
   createdAt: string;
+  memberCount: number;
+  currentUserRole: 'creator' | 'admin' | 'moderator' | 'member' | null;
 }
 
 export interface DashboardData {

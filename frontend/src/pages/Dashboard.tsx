@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   MessageSquare, Users, Search, Sparkles, TrendingUp,
-  ArrowRight, Clock, Zap, Globe, Brain,
+  ArrowRight, Clock, Zap, Globe, Brain, Quote, Crown, Radar, FolderKanban,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { useAuthStore } from '../store/authStore';
@@ -97,6 +97,40 @@ export default function Dashboard() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  const featuredQuote = data?.activity.find((item) => item.content.trim().length >= 24) || data?.activity[0] || null;
+  const topTags = Array.from(new Set((data?.recentRooms || []).flatMap((room) => room.tags))).slice(0, 4);
+  const adminRooms = (data?.recentRooms || []).filter((room) => room.currentUserRole === 'creator' || room.currentUserRole === 'admin');
+  const collaborationTone = !data
+    ? 'Loading your collaboration profile...'
+    : data.stats.totalRooms >= 4
+      ? 'You are running a multi-room collaboration flow with steady member activity.'
+      : data.stats.totalConversations >= 5
+        ? 'You are balancing focused solo work with room-based collaboration.'
+        : 'Your workspace is set up for a lighter, more deliberate conversation pace.';
+  const analysisCards = data ? [
+    {
+      icon: Radar,
+      title: 'Momentum',
+      value: data.stats.messagesToday > 20 ? 'High' : data.stats.messagesToday > 5 ? 'Steady' : 'Building',
+      text: `${data.stats.messagesToday} messages today across your active spaces.`,
+      accent: 'from-emerald-500 to-teal-500',
+    },
+    {
+      icon: Crown,
+      title: 'Leadership',
+      value: `${adminRooms.length}`,
+      text: adminRooms.length > 0 ? 'Rooms where you can guide members and manage access.' : 'You are currently contributing as a member.',
+      accent: 'from-amber-500 to-orange-500',
+    },
+    {
+      icon: FolderKanban,
+      title: 'Focus Tags',
+      value: topTags.length > 0 ? topTags[0] : 'None',
+      text: topTags.length > 0 ? topTags.map((tag) => `#${tag}`).join(' · ') : 'Create or join tagged rooms to build topic analysis.',
+      accent: 'from-cyan-500 to-blue-500',
+    },
+  ] : [];
+
   return (
     <div className="min-h-screen bg-navy-900 relative overflow-hidden">
       <Navbar />
@@ -176,6 +210,50 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Quote + Analysis */}
+        {data && (
+          <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mb-10">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.32 }}
+              className="xl:col-span-2 rounded-3xl border border-neon-purple/20 bg-gradient-to-br from-navy-800/95 via-navy-800/80 to-violet-950/60 p-6 backdrop-blur-lg"
+            >
+              <div className="flex items-center gap-2 text-neon-purple mb-4">
+                <Quote size={18} />
+                <span className="text-xs font-semibold uppercase tracking-[0.2em]">Conversation Quote</span>
+              </div>
+              <p className="font-display text-2xl leading-relaxed text-white">
+                {featuredQuote ? `“${featuredQuote.content}”` : '“Your next strong conversation will show up here once activity starts flowing.”'}
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+                {featuredQuote?.roomName ? <span className="rounded-full border border-navy-600/50 bg-navy-900/40 px-3 py-1">#{featuredQuote.roomName}</span> : null}
+                {featuredQuote ? <span>{formatTime(featuredQuote.timestamp)}</span> : null}
+              </div>
+              <p className="mt-5 text-sm text-gray-400">{collaborationTone}</p>
+            </motion.div>
+
+            <div className="xl:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+              {analysisCards.map(({ icon: Icon, title, value, text, accent }, index) => (
+                <motion.div
+                  key={title}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.36 + (index * 0.05) }}
+                  className="rounded-2xl border border-navy-700/50 bg-navy-800/70 p-5 backdrop-blur-lg"
+                >
+                  <div className={`mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br ${accent}`}>
+                    <Icon size={18} className="text-white" />
+                  </div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">{title}</p>
+                  <p className="font-display text-2xl text-white mb-2">{value}</p>
+                  <p className="text-sm text-gray-400 leading-relaxed">{text}</p>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Quick Actions + Activity */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Quick Actions */}
@@ -230,6 +308,20 @@ export default function Dashboard() {
                 <p className="text-xs text-gray-500">Find anything across all chats</p>
               </div>
               <ArrowRight size={16} className="text-gray-600 group-hover:text-neon-coral group-hover:translate-x-1 transition-all" />
+            </Link>
+
+            <Link
+              to="/projects"
+              className="group flex items-center gap-4 p-5 rounded-2xl bg-gradient-to-br from-navy-800/90 to-navy-800/60 border border-navy-700/50 hover:border-fuchsia-400/40 transition-all duration-300 backdrop-blur-lg"
+            >
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-fuchsia-500 to-violet-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <FolderKanban size={20} className="text-white" />
+              </div>
+              <div className="flex-1">
+                <p className="font-display font-semibold text-white">Projects</p>
+                <p className="text-xs text-gray-500">Context-rich AI workspaces with reusable files</p>
+              </div>
+              <ArrowRight size={16} className="text-gray-600 group-hover:text-fuchsia-400 group-hover:translate-x-1 transition-all" />
             </Link>
 
             <Link
@@ -337,6 +429,16 @@ export default function Dashboard() {
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="font-display font-semibold text-white text-sm group-hover:text-neon-purple transition-colors">{room.name}</h3>
                         <ArrowRight size={14} className="text-gray-600 group-hover:text-neon-purple group-hover:translate-x-1 transition-all" />
+                      </div>
+                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-gray-500">
+                        <span className="rounded-full border border-navy-600/40 bg-navy-900/30 px-2 py-0.5">
+                          {room.memberCount} members
+                        </span>
+                        {room.currentUserRole ? (
+                          <span className="rounded-full border border-neon-blue/20 bg-neon-blue/10 px-2 py-0.5 capitalize text-neon-blue">
+                            {room.currentUserRole}
+                          </span>
+                        ) : null}
                       </div>
                       {room.description && (
                         <p className="text-xs text-gray-500 line-clamp-2 mb-2">{room.description}</p>

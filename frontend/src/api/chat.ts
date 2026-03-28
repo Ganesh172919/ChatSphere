@@ -22,6 +22,14 @@ interface ChatResponse {
   insight?: ConversationInsight | null;
   modelId?: string | null;
   provider?: string | null;
+  requestedModelId?: string | null;
+  processingMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  autoMode?: boolean;
+  autoComplexity?: string | null;
+  fallbackUsed?: boolean;
 }
 
 export async function sendChatMessage(
@@ -29,7 +37,8 @@ export async function sendChatMessage(
   history: ChatMessage[],
   conversationId?: string,
   modelId?: string,
-  attachment?: ChatAttachment | null
+  attachment?: ChatAttachment | null,
+  projectId?: string | null
 ): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>('/chat', {
     message,
@@ -37,6 +46,7 @@ export async function sendChatMessage(
     conversationId,
     modelId,
     attachment,
+    projectId,
   });
   return data;
 }

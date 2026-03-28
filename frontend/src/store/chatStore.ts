@@ -3,9 +3,11 @@ import { persist } from 'zustand/middleware';
 import type { ConversationInsight, MemoryReference } from '../types/chat';
 
 export interface Message {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  messageState?: 'pending' | 'complete' | 'error';
   memoryRefs?: MemoryReference[];
   fileUrl?: string | null;
   fileName?: string | null;
@@ -13,12 +15,25 @@ export interface Message {
   fileSize?: number | null;
   modelId?: string | null;
   provider?: string | null;
+  requestedModelId?: string | null;
+  processingMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  autoMode?: boolean;
+  autoComplexity?: string | null;
+  fallbackUsed?: boolean;
 }
 
 export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
+  project?: {
+    id: string;
+    name: string;
+    description: string;
+  } | null;
   createdAt: string;
   updatedAt?: string;
   serverId?: string;
@@ -34,6 +49,7 @@ interface ChatState {
   upsertConversation: (conversation: Conversation) => void;
   setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Message) => void;
+  updateMessage: (conversationId: string, messageId: string, updates: Partial<Message>) => void;
   setConversationMessages: (conversationId: string, messages: Message[]) => void;
   updateConversationTitle: (conversationId: string, title: string) => void;
   updateConversationServerId: (conversationId: string, serverId: string) => void;
@@ -77,6 +93,20 @@ export const useChatStore = create<ChatState>()(
                   ...conversation,
                   messages: [...conversation.messages, message],
                   updatedAt: message.timestamp,
+                }
+              : conversation
+          )),
+        })),
+      updateMessage: (conversationId, messageId, updates) =>
+        set((state) => ({
+          conversations: sortByUpdatedDate(state.conversations.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  messages: conversation.messages.map((message) =>
+                    message.id === messageId ? { ...message, ...updates } : message
+                  ),
+                  updatedAt: updates.timestamp || conversation.updatedAt || conversation.createdAt,
                 }
               : conversation
           )),

@@ -7,9 +7,10 @@ interface Props {
   text: string;
   onAccept: (corrected: string) => void;
   enabled?: boolean;
+  modelId?: string;
 }
 
-export default function GrammarSuggestion({ text, onAccept, enabled = false }: Props) {
+export default function GrammarSuggestion({ text, onAccept, enabled = false, modelId }: Props) {
   const [suggestion, setSuggestion] = useState<{
     corrected: string | null;
     suggestions: string[];
@@ -22,7 +23,7 @@ export default function GrammarSuggestion({ text, onAccept, enabled = false }: P
     setIsChecking(true);
     setDismissed(false);
     try {
-      const result = await checkGrammar(text);
+      const result = await checkGrammar(text, modelId);
       if (result.corrected && result.corrected !== text) {
         setSuggestion(result);
       } else {
@@ -33,7 +34,7 @@ export default function GrammarSuggestion({ text, onAccept, enabled = false }: P
     } finally {
       setIsChecking(false);
     }
-  }, [text, enabled, isChecking]);
+  }, [text, enabled, isChecking, modelId]);
 
   const handleAccept = () => {
     if (suggestion?.corrected) {

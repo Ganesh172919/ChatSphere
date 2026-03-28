@@ -56,6 +56,15 @@ interface Props {
   sentiment?: { sentiment: string; emoji: string; confidence: number } | null;
   modelId?: string | null;
   provider?: string | null;
+  requestedModelId?: string | null;
+  processingMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  autoMode?: boolean;
+  autoComplexity?: string | null;
+  fallbackUsed?: boolean;
+  messageState?: 'pending' | 'complete' | 'error';
 }
 
 const REACTION_EMOJIS = [
@@ -137,6 +146,15 @@ export default function MessageBubble({
   sentiment = null,
   modelId = null,
   provider = null,
+  requestedModelId = null,
+  processingMs = null,
+  promptTokens = null,
+  completionTokens = null,
+  totalTokens = null,
+  autoMode = false,
+  autoComplexity = null,
+  fallbackUsed = false,
+  messageState = 'complete',
 }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -149,6 +167,13 @@ export default function MessageBubble({
   const displayContent = isLong && !isExpanded ? `${content.slice(0, 1500)}...` : content;
   const isImage = Boolean(fileUrl && fileType?.startsWith('image/'));
   const aiMetaLabel = [modelId, provider].filter(Boolean).join(' · ');
+
+  const tokenLabel = totalTokens ? `${totalTokens} tok` : null;
+  const tokenBreakdownLabel = promptTokens || completionTokens
+    ? `${promptTokens ?? 0}/${completionTokens ?? 0} in-out`
+    : null;
+  const timingLabel = processingMs ? `${(processingMs / 1000).toFixed(processingMs >= 10000 ? 0 : 1)}s` : null;
+  const routeLabel = autoMode ? `Auto${autoComplexity ? ` (${autoComplexity})` : ''}` : requestedModelId ? 'Manual' : null;
 
   const formatTime = (ts: string) => {
     return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -226,13 +251,13 @@ export default function MessageBubble({
       {!isUser || showReactions ? (
         <div
           className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 ${
-            isAI
+            isAssistant
               ? 'bg-gradient-to-br from-neon-purple to-neon-blue animate-pulse-glow'
               : `bg-gradient-to-br ${getAvatarColor(userId || 'user')}`
           }`}
           aria-hidden="true"
         >
-          {isAI ? 'GX' : getInitials(username || 'U')}
+          {isAssistant ? 'AI' : getInitials(username || 'U')}
         </div>
       ) : null}
 
@@ -243,7 +268,7 @@ export default function MessageBubble({
           </div>
         )}
 
-        {showReactions && !isAI && (
+        {showReactions && !isAssistant && (
           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <span className="text-xs font-semibold text-gray-300">{username}</span>
             <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
@@ -259,21 +284,26 @@ export default function MessageBubble({
           </div>
         )}
 
-        {isAI && (
+        {isAssistant && (
           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <span className="text-xs font-semibold bg-gradient-to-r from-neon-purple to-neon-blue bg-clip-text text-transparent">
-              AI · Gemini
+              AI Assistant
             </span>
             {triggeredBy && (
               <span className="text-[10px] text-gray-600">triggered by {triggeredBy}</span>
             )}
             <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
+            {routeLabel ? <span className="text-[10px] text-gray-600">{routeLabel}</span> : null}
+            {timingLabel ? <span className="text-[10px] text-gray-600">{timingLabel}</span> : null}
+            {tokenLabel ? <span className="text-[10px] text-gray-600">{tokenLabel}</span> : null}
+            {tokenBreakdownLabel ? <span className="text-[10px] text-gray-600">{tokenBreakdownLabel}</span> : null}
+            {fallbackUsed ? <span className="text-[10px] text-amber-300">fallback</span> : null}
           </div>
         )}
 
         <div
           className={`rounded-2xl px-4 py-3 ${
-            isAI
+            isAssistant
               ? 'bg-navy-700/60 border-l-2 border-neon-purple/60'
               : isUser && !showReactions
                 ? 'bg-gradient-to-br from-neon-purple/20 to-neon-blue/20 border border-neon-purple/20'
@@ -309,7 +339,16 @@ export default function MessageBubble({
             </div>
           ) : (
             <>
-              {isAssistant || isAI ? (
+              {messageState === 'pending' && isAssistant ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-gray-300">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-neon-purple animate-pulse" />
+                    <span>Thinking...</span>
+                  </div>
+                  <div className="h-3 w-3/4 rounded-full bg-navy-600/60 animate-pulse" />
+                  <div className="h-3 w-1/2 rounded-full bg-navy-600/40 animate-pulse" />
+                </div>
+              ) : isAssistant ? (
                 <MarkdownRenderer content={displayContent} />
               ) : (
                 <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">{content}</p>
@@ -350,8 +389,15 @@ export default function MessageBubble({
         </div>
 
         <div className="flex items-center gap-3 mt-1 px-1 flex-wrap">
-          {(isAssistant || isAI) && (
-            <span className="text-[10px] text-gray-600">{words} words</span>
+          {isAssistant && (
+            <>
+              <span className="text-[10px] text-gray-600">{words} words</span>
+              {modelId ? <span className="text-[10px] text-gray-600">{modelId}</span> : null}
+              {timingLabel ? <span className="text-[10px] text-gray-600">{timingLabel}</span> : null}
+              {tokenLabel ? <span className="text-[10px] text-gray-600">{tokenLabel}</span> : null}
+              {tokenBreakdownLabel ? <span className="text-[10px] text-gray-600">{tokenBreakdownLabel}</span> : null}
+              {fallbackUsed ? <span className="text-[10px] text-amber-300">fallback</span> : null}
+            </>
           )}
           {!showReactions && !isAssistant && (
             <>
@@ -416,7 +462,7 @@ export default function MessageBubble({
                   <Pin size={14} />
                 </button>
               )}
-              {canEdit && !isAI && !isEditing && (
+              {canEdit && !isAssistant && !isEditing && (
                 <button
                   onClick={() => setIsEditing(true)}
                   className="p-1 rounded hover:bg-navy-600 text-gray-500 hover:text-gray-300 transition-colors"
@@ -426,7 +472,7 @@ export default function MessageBubble({
                   <PenSquare size={14} />
                 </button>
               )}
-              {canDelete && !isAI && (
+              {canDelete && !isAssistant && (
                 <button
                   onClick={onDelete}
                   className="p-1 rounded hover:bg-navy-600 text-gray-500 hover:text-red-300 transition-colors"
