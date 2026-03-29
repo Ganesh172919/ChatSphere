@@ -5,7 +5,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 // CREATE GROUP CHAT
 export const createGroup = async (req: AuthRequest, res: Response) => {
     try {
-        const { name, members } = req.body;
+        const { name, members, description, aiModel } = req.body;
         const userId = req.user?.userId;
 
         if (!userId) {
@@ -26,6 +26,8 @@ export const createGroup = async (req: AuthRequest, res: Response) => {
             name,
             createdById: userId,
             members: members || [],
+            description,
+            aiModel,
         });
 
         res.status(201).json({
@@ -44,7 +46,7 @@ export const createGroup = async (req: AuthRequest, res: Response) => {
 // GET GROUP DETAILS
 export const getGroup = async (req: AuthRequest, res: Response) => {
     try {
-        const { groupId } = req.params;
+        const groupId = String(req.params.groupId);
         const userId = req.user?.userId;
 
         if (!userId) {
@@ -104,7 +106,7 @@ export const getUserChats = async (req: AuthRequest, res: Response) => {
 // ADD MEMBER TO GROUP
 export const addMember = async (req: AuthRequest, res: Response) => {
     try {
-        const { groupId } = req.params;
+        const groupId = String(req.params.groupId);
         const { userId: userIdToAdd } = req.body;
         const performedBy = req.user?.userId;
 
@@ -150,7 +152,7 @@ export const addMember = async (req: AuthRequest, res: Response) => {
 // REMOVE MEMBER FROM GROUP
 export const removeMember = async (req: AuthRequest, res: Response) => {
     try {
-        const { groupId } = req.params;
+        const groupId = String(req.params.groupId);
         const { userId: userIdToRemove } = req.body;
         const performedBy = req.user?.userId;
 
@@ -196,7 +198,7 @@ export const removeMember = async (req: AuthRequest, res: Response) => {
 // UPDATE GROUP NAME
 export const updateGroup = async (req: AuthRequest, res: Response) => {
     try {
-        const { groupId } = req.params;
+        const groupId = String(req.params.groupId);
         const { name } = req.body;
         const performedBy = req.user?.userId;
 
@@ -243,7 +245,7 @@ export const updateGroup = async (req: AuthRequest, res: Response) => {
 // CHANGE MEMBER ROLE
 export const changeMemberRole = async (req: AuthRequest, res: Response) => {
     try {
-        const { groupId } = req.params;
+        const groupId = String(req.params.groupId);
         const { userId: userIdToChangeRole, role } = req.body;
         const performedBy = req.user?.userId;
 
@@ -298,7 +300,7 @@ export const changeMemberRole = async (req: AuthRequest, res: Response) => {
 // DELETE GROUP CHAT
 export const deleteGroup = async (req: AuthRequest, res: Response) => {
     try {
-        const { groupId } = req.params;
+        const groupId = String(req.params.groupId);
         const performedBy = req.user?.userId;
 
         if (!performedBy) {

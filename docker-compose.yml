@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: chatsphere
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - chatsphere-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chatsphere"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      CLIENT_URL: http://localhost:8080
+      CLIENT_URLS: http://localhost:5173
+      SERVER_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/chatsphere?schema=public
+      JWT_ACCESS_SECRET: chatsphere-access-secret-change-me
+      JWT_REFRESH_SECRET: chatsphere-refresh-secret-change-me
+      DEFAULT_AI_MODEL: openai/gpt-5.4-mini
+      OPENROUTER_DEFAULT_MODEL: openai/gpt-5.4-mini
+      OPENROUTER_MODELS: openai/gpt-5.4-mini=GPT-5.4 Mini,openai/gpt-5.4=GPT-5.4,anthropic/claude-sonnet-4.6=Claude Sonnet 4.6,google/gemini-2.5-flash=Gemini 2.5 Flash
+      MESSAGE_EDIT_WINDOW_MINUTES: 15
+      AI_REQUEST_TIMEOUT_MS: 30000
+      AI_CONTEXT_MESSAGE_LIMIT: 18
+      AI_RATE_LIMIT_PER_MINUTE: 8
+    ports:
+      - "3000:3000"
+    volumes:
+      - chatsphere-uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_SOCKET_URL: ""
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  chatsphere-postgres:
+  chatsphere-uploads:

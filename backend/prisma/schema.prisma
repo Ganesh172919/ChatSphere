@@ -1,85 +1,260 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  password  String
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  password     String
   refreshToken String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isAdmin      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  // Relations
-  chats     ChatMember[]
-  messages  Message[]
+  memberships          ChatMember[]
+  messages             Message[]
+  presence             UserPresence?
+  memoryNodes          MemoryNode[]
+  memoryEdges          MemoryEdge[]
+  promptTemplates      PromptTemplate[] @relation("PromptCreator")
+  reportedFlags        ModerationFlag[] @relation("FlagReporter")
+  votes                PollVote[]
+  messageReactions     MessageReaction[]
+  blocksInitiated      UserBlock[] @relation("Blocker")
+  blocksReceived       UserBlock[] @relation("Blocked")
+  importedConversations ChatImport[]
+  createdChats         Chat[] @relation("ChatCreator")
 }
 
 model Chat {
-  id        String   @id @default(uuid())
-  type      ChatType
-  name      String?   // only for group chats
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  type        String
+  name        String?
+  description String?
+  aiModel     String?
+  createdById String?
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  // Relations
+  createdBy User? @relation("ChatCreator", fields: [createdById], references: [id], onDelete: SetNull)
   members   ChatMember[]
   messages  Message[]
+  insights  ConversationInsight[]
+  imports   ChatImport[]
+
+  @@index([updatedAt])
 }
 
 model ChatMember {
-  id        String   @id @default(uuid())
-  userId    String
-  chatId    String
-  role      ChatRole @default(MEMBER)
-  joinedAt  DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String
+  chatId     String
+  role       String   @default("MEMBER")
+  joinedAt   DateTime @default(now())
+  lastReadAt DateTime?
 
-  // Relations
-  user      User @relation(fields: [userId], references: [id])
-  chat      Chat @relation(fields: [chatId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@unique([userId, chatId])
+  @@index([chatId])
 }
 
 model Message {
-  id        String        @id @default(uuid())
-  content   String
-  type      MessageType   @default(TEXT)
+  id              String      @id @default(cuid())
+  content         String
+  type            String      @default("TEXT")
+  metadata        String?
+  modelUsed       String?
+  isPinned        Boolean     @default(false)
+  editedAt        DateTime?
+  deletedAt       DateTime?
+  parentMessageId String?
+  chatId          String
+  senderId        String
+  createdAt       DateTime    @default(now())
 
-  chatId    String
-  senderId  String
-
-  createdAt DateTime @default(now())
-
-  // Relations
-  chat      Chat @relation(fields: [chatId], references: [id])
-  sender    User @relation(fields: [senderId], references: [id])
+  parentMessage Message? @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies      Message[] @relation("MessageReplies")
+  chat         Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender       User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  reactions    MessageReaction[]
+  poll         Poll?
+  flags        ModerationFlag[]
 
   @@index([chatId, createdAt])
+  @@index([senderId, createdAt])
 }
 
-enum ChatType {
-  DIRECT
-  GROUP
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
 }
 
-enum ChatRole {
-  ADMIN
-  MEMBER
+model Poll {
+  id          String   @id @default(cuid())
+  messageId   String   @unique
+  question    String
+  allowMulti  Boolean  @default(false)
+  closesAt    DateTime?
+  createdAt   DateTime @default(now())
+
+  message Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  options PollOption[]
+  votes   PollVote[]
 }
 
-enum MessageType {
-  TEXT
-  AI
-  FILE
+model PollOption {
+  id      String @id @default(cuid())
+  pollId  String
+  text    String
+  order   Int
+
+  poll  Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes PollVote[]
+
+  @@index([pollId])
+}
+
+model PollVote {
+  id         String   @id @default(cuid())
+  pollId     String
+  optionId   String
+  voterId    String
+  createdAt  DateTime @default(now())
+
+  poll   Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  voter  User       @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, optionId, voterId])
+  @@index([pollId, voterId])
+  @@index([optionId])
+}
+
+model UserPresence {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  isOnline  Boolean  @default(false)
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MemoryNode {
+  id          String   @id @default(cuid())
+  userId      String
+  label       String
+  description String?
+  strength    Float    @default(0.5)
+  color       String?  @default("#4f46e5")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outgoingEdges MemoryEdge[] @relation("MemoryEdgeFrom")
+  incomingEdges MemoryEdge[] @relation("MemoryEdgeTo")
+
+  @@index([userId])
+}
+
+model MemoryEdge {
+  id          String   @id @default(cuid())
+  userId      String
+  fromNodeId  String
+  toNodeId    String
+  label       String?
+  weight      Float    @default(0.5)
+  createdAt   DateTime @default(now())
+
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromNode MemoryNode @relation("MemoryEdgeFrom", fields: [fromNodeId], references: [id], onDelete: Cascade)
+  toNode   MemoryNode @relation("MemoryEdgeTo", fields: [toNodeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fromNodeId, toNodeId])
+  @@index([userId])
+}
+
+model ConversationInsight {
+  id          String   @id @default(cuid())
+  chatId      String
+  summary     String
+  sentiment   String
+  keywords    String
+  generatedAt DateTime @default(now())
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, generatedAt])
+}
+
+model ChatImport {
+  id          String   @id @default(cuid())
+  userId      String
+  chatId      String
+  sourceModel String?
+  format      String
+  rawPayload  String
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model PromptTemplate {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  scope       String   @default("GLOBAL")
+  isActive    Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User? @relation("PromptCreator", fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+model ModerationFlag {
+  id          String           @id @default(cuid())
+  messageId   String
+  reporterId  String
+  reason      String
+  status      String           @default("OPEN")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  reporter User    @relation("FlagReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model UserBlock {
+  id         String   @id @default(cuid())
+  blockerId  String
+  blockedId  String
+  createdAt  DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
 }

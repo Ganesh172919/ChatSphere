@@ -1,35 +1,74 @@
 import { Request, Response } from "express";
 import * as authService from "../services/auth.service";
+import { AuthRequest } from "../middleware/auth.middleware";
+
+const shouldUseSecureCookie = () => {
+    const override = process.env.COOKIE_SECURE?.trim().toLowerCase();
+    if (override === "true") {
+        return true;
+    }
+
+    if (override === "false") {
+        return false;
+    }
+
+    const urls = [process.env.SERVER_URL, process.env.CLIENT_URL, process.env.CLIENT_URLS]
+        .filter(Boolean)
+        .flatMap((value) => String(value).split(","))
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+    if (!urls.length) {
+        return process.env.NODE_ENV === "production";
+    }
+
+    return urls.every((value) => value.startsWith("https://"));
+};
 
 const setRefreshToken = (res: Response, token: string) => {
+    const secure = shouldUseSecureCookie();
+
     res.cookie("refreshToken", token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure,
         sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000
+        maxAge: 7 * 24 * 60 * 60 * 1000,
     })
 }
 
 const clearRefreshTokenCookie = (res: Response) => {
-    res.clearCookie("refreshToken");
+    res.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: shouldUseSecureCookie(),
+        sameSite: "lax",
+    });
 };
 
 // generting new acess token helper
 export const refresh = async (req: any, res: Response) => {
-    try {
-        const refreshToken = req.cookies.refreshToken;
+    const refreshToken = req.cookies.refreshToken;
 
+    if (!refreshToken) {
+        clearRefreshTokenCookie(res);
+        return res.status(200).json({
+            success: true,
+            data: null,
+        });
+    }
+
+    try {
         const data = await authService.refreshAccessToken(refreshToken);
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
-            accessToken: data.accessToken,
+            data,
         });
 
     } catch (error: any) {
-        res.status(401).json({
-            success: false,
-            message: error.message,
+        clearRefreshTokenCookie(res);
+        return res.status(200).json({
+            success: true,
+            data: null,
         });
     }
 };
@@ -38,6 +77,8 @@ export const refresh = async (req: any, res: Response) => {
 export const register = async (req: Request, res: Response) => {
     try {
         const user = await authService.registerUser(req.body);
+
+        setRefreshToken(res, user.refreshToken);
 
         res.status(201).json({
             success: true,
@@ -90,6 +131,29 @@ export const logout = async (req: any, res: Response) => {
         res.status(500).json({
             success: false,
             message: "Logout failed",
+        });
+    }
+};
+
+export const me = async (req: AuthRequest, res: Response) => {
+    try {
+        if (!req.user?.userId) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized",
+            });
+        }
+
+        const user = await authService.getCurrentUser(req.user.userId);
+
+        return res.status(200).json({
+            success: true,
+            data: user,
+        });
+    } catch (error: any) {
+        return res.status(400).json({
+            success: false,
+            message: error.message,
         });
     }
 };

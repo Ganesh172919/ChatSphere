@@ -1,12 +1,21 @@
 import { Response } from "express";
 import * as messageService from "../services/message.service";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { getIO } from "../lib/socket";
 
 // SEND MESSAGE
 export const sendMessage = async (req: AuthRequest & { params: { chatId: string } }, res: Response) => {
     try {
         const { chatId } = req.params;
-        const { content, type } = req.body;
+        const {
+            content,
+            type,
+            parentMessageId,
+            metadata,
+            poll,
+            modelUsed,
+            requestAiReply,
+        } = req.body;
         const userId = req.user?.userId;
 
         if (!userId) {
@@ -28,11 +37,49 @@ export const sendMessage = async (req: AuthRequest & { params: { chatId: string 
             senderId: userId,
             content,
             type: type || "TEXT",
+            parentMessageId,
+            metadata,
+            poll,
+            modelUsed,
         });
+
+        try {
+            getIO().to(chatId).emit("message:new", message);
+        } catch {
+            // Socket server might not be initialized in tests.
+        }
+
+        let aiMessage = null;
+        let aiWarning: string | null = null;
+        if (requestAiReply || (typeof content === "string" && /(^|\s)@ai(\b|\s|[.,!?;:])/i.test(content))) {
+            try {
+                aiMessage = await messageService.maybeGenerateRoomAiReply(
+                    chatId,
+                    content,
+                    userId,
+                    modelUsed,
+                    { force: Boolean(requestAiReply) }
+                );
+
+                if (aiMessage) {
+                    try {
+                        getIO().to(chatId).emit("message:new", aiMessage);
+                    } catch {
+                        // Socket server might not be initialized in tests.
+                    }
+                }
+            } catch (error: any) {
+                aiWarning = error?.message || "AI reply could not be generated";
+            }
+        }
 
         res.status(201).json({
             success: true,
-            data: message,
+            data: {
+                message,
+                aiMessage,
+                aiWarning,
+            },
             message: "Message sent successfully",
         });
     } catch (error: any) {
@@ -67,8 +114,8 @@ export const getMessages = async (req: AuthRequest & { params: { chatId: string 
         const messages = await messageService.getMessages(
             chatId,
             userId,
-            parseInt(limit as string) || 50,
-            parseInt(skip as string) || 0
+            Number(limit as string),
+            Number(skip as string)
         );
 
         res.status(200).json({
@@ -105,8 +152,18 @@ export const deleteMessage = async (req: AuthRequest & { params: { messageId: st
 
         const result = await messageService.deleteMessage(messageId, userId);
 
+        try {
+            getIO().to(result.chatId).emit("message:deleted", {
+                messageId: result.messageId,
+                chatId: result.chatId,
+            });
+        } catch {
+            // Socket server might not be initialized in tests.
+        }
+
         res.status(200).json({
             success: true,
+            data: result,
             message: result.message,
         });
     } catch (error: any) {
@@ -151,6 +208,14 @@ export const editMessage = async (req: AuthRequest & { params: { messageId: stri
             userId
         );
 
+        try {
+            getIO()
+                .to((message as { chatId: string }).chatId)
+                .emit("message:updated", message);
+        } catch {
+            // Socket server might not be initialized in tests.
+        }
+
         res.status(200).json({
             success: true,
             data: message,
@@ -168,5 +233,110 @@ export const editMessage = async (req: AuthRequest & { params: { messageId: stri
             success: false,
             message: error.message,
         });
+    }
+};
+
+// REACT TO MESSAGE
+export const reactToMessage = async (
+    req: AuthRequest & { params: { messageId: string } },
+    res: Response
+) => {
+    try {
+        const { messageId } = req.params;
+        const { emoji } = req.body as { emoji: string };
+        const userId = req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
+
+        const result = await messageService.toggleReaction(messageId, userId, emoji);
+
+        try {
+            getIO().to(result.message.chatId).emit("message:updated", result.message);
+        } catch {
+            // Socket server might not be initialized in tests.
+        }
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+        return res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+// PIN / UNPIN MESSAGE
+export const pinMessage = async (
+    req: AuthRequest & { params: { messageId: string } },
+    res: Response
+) => {
+    try {
+        const { messageId } = req.params;
+        const { pinned } = req.body as { pinned: boolean };
+        const userId = req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
+
+        const result = await messageService.pinMessage(messageId, userId, Boolean(pinned));
+
+        try {
+            getIO().to(result.chatId).emit("message:updated", result);
+        } catch {
+            // Socket server might not be initialized in tests.
+        }
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+        return res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+// VOTE POLL
+export const votePoll = async (
+    req: AuthRequest & { params: { messageId: string } },
+    res: Response
+) => {
+    try {
+        const { messageId } = req.params;
+        const { optionId } = req.body as { optionId: string };
+        const userId = req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
+
+        const result = await messageService.votePoll(messageId, userId, optionId);
+
+        try {
+            getIO().to(result.message.chatId).emit("message:updated", result.message);
+        } catch {
+            // Socket server might not be initialized in tests.
+        }
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+        return res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+// REPORT MESSAGE
+export const reportMessage = async (
+    req: AuthRequest & { params: { messageId: string } },
+    res: Response
+) => {
+    try {
+        const { messageId } = req.params;
+        const { reason } = req.body as { reason: string };
+        const userId = req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
+
+        const result = await messageService.reportMessage(messageId, userId, reason || "No reason provided");
+        return res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+        return res.status(400).json({ success: false, message: error.message });
     }
 };
