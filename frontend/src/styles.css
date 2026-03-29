@@ -458,6 +458,37 @@ pre,
   flex-wrap: wrap;
 }
 
+.primary-nav {
+  display: flex;
+  flex: 1 1 440px;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.primary-nav__button {
+  min-width: 148px;
+  padding: 0.85rem 1rem;
+  border-radius: 22px;
+  display: grid;
+  gap: 0.2rem;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.primary-nav__button span {
+  font-weight: 700;
+}
+
+.primary-nav__button small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.primary-nav__button.is-active {
+  background: linear-gradient(135deg, rgba(110, 168, 255, 0.18), rgba(139, 124, 255, 0.18));
+  border-color: rgba(110, 168, 255, 0.4);
+}
+
 .workspace-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -497,6 +528,23 @@ pre,
   display: grid;
   gap: 1rem;
   min-height: calc(100vh - 220px);
+}
+
+.page-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.groups-page,
+.settings-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.groups-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 1rem;
+  align-items: start;
 }
 
 .chat-toolbar__search {
@@ -1006,6 +1054,10 @@ pre,
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .groups-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 920px) {
@@ -1037,13 +1089,21 @@ pre,
     align-items: stretch;
   }
 
+  .primary-nav {
+    width: 100%;
+  }
+
+  .primary-nav__button {
+    min-width: 132px;
+  }
+
   .mobile-only {
     display: inline-flex;
   }
 
   .mobile-nav {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.6rem;
   }
 
@@ -1075,6 +1135,11 @@ pre,
   .stats-grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .primary-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .message-card.is-own,

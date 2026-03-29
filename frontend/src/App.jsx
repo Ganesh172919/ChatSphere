@@ -883,7 +883,6 @@ export default function App() {
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState("chat");
   const [theme, setTheme] = useState(() => localStorage.getItem("chatsphere-theme") || "dark");
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
@@ -1128,17 +1127,13 @@ export default function App() {
   }, [accessToken, currentPage, chats, activeChatId]);
 
   useEffect(() => {
-    if (!accessToken || !chats.length) {
+    if (!activeChatId || !accessToken) {
+      setActiveChat(emptyActiveChat);
       return;
     }
 
-    if (!activeChatId) {
-      setActiveChatId(chats[0].id);
-    }
-  }, [accessToken, chats, activeChatId]);
-
-  useEffect(() => {
-    if (!activeChatId || !accessToken) {
+    const selectedChatSummary = chats.find((chat) => chat.id === activeChatId);
+    if (currentPage !== "settings" && selectedChatSummary && !isChatAllowedOnPage(selectedChatSummary, currentPage)) {
       setActiveChat(emptyActiveChat);
       return;
     }
@@ -1178,7 +1173,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [activeChatId, accessToken]);
+  }, [activeChatId, accessToken, chats, currentPage]);
 
   useEffect(() => {
     if (workspaceTab !== "memory" || !accessToken) {
@@ -1426,7 +1421,6 @@ export default function App() {
       if (event.key === "Escape") {
         setReplyTarget(null);
         setInfoPanelOpen(false);
-        setSettingsOpen(false);
       }
     };
 
@@ -2751,6 +2745,13 @@ export default function App() {
     </section>
   );
 
+  const activePrimaryPage = PRIMARY_PAGES.find((page) => page.id === currentPage) || PRIMARY_PAGES[0];
+  const showConversationAside =
+    Boolean(activeChat) &&
+    infoPanelOpen &&
+    workspaceTab === "chat" &&
+    (currentPage === "ai" || currentPage === "rooms");
+
   if (!user) {
     return (
       <AuthScreen
@@ -2780,7 +2781,7 @@ export default function App() {
           </div>
 
           <div className="brand-card__actions">
-            <button type="button" className="button button--ghost" onClick={() => setSettingsOpen(true)}>
+            <button type="button" className="button button--ghost" onClick={() => navigateToPage("settings")}>
               Settings
             </button>
             <button type="button" className="button button--ghost" onClick={handleLogout}>
@@ -2791,141 +2792,290 @@ export default function App() {
 
         <div className="sidebar-section">
           <div className="sidebar-section__header">
-            <h2>Start</h2>
+            <h2>
+              {currentPage === "ai"
+                ? "AI Tools"
+                : currentPage === "groups"
+                  ? "Groups Hub"
+                  : currentPage === "rooms"
+                    ? "Start a Room"
+                    : "Quick Actions"}
+            </h2>
             <button type="button" className="button button--secondary" onClick={() => setSidebarOpen(false)}>
               Hide
             </button>
           </div>
 
-          <button type="button" className="button button--primary" onClick={() => handleCreateSoloChat(true)}>
-            New solo AI chat
-          </button>
+          {currentPage === "ai" ? (
+            <>
+              <button type="button" className="button button--primary" onClick={() => handleCreateSoloChat(true)}>
+                New solo AI chat
+              </button>
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => {
+                  navigateToPage("ai");
+                  setWorkspaceTab("transfer");
+                  setSidebarOpen(false);
+                }}
+              >
+                Import external history
+              </button>
+              <div className="helper-box">
+                <strong>AI Workspace</strong>
+                <p>Use saved solo threads, memory graph editing, intelligence, and model routing from one place.</p>
+              </div>
+            </>
+          ) : null}
 
-          <label className="field">
-            <span>Search users</span>
-            <input
-              value={userPickerQuery}
-              onChange={(event) => setUserPickerQuery(event.target.value)}
-              placeholder="Find teammates"
-            />
-          </label>
+          {currentPage === "groups" ? (
+            <>
+              <label className="field">
+                <span>Search users</span>
+                <input
+                  value={userPickerQuery}
+                  onChange={(event) => setUserPickerQuery(event.target.value)}
+                  placeholder="Find teammates"
+                />
+              </label>
 
-          <div className="picker-list">
-            {userPickerResults.map((person) => (
-              <article key={person.id} className="picker-item">
-                <div>
-                  <strong>{person.name || "Unnamed user"}</strong>
-                  <span>{person.email}</span>
-                </div>
-                <div className="row-actions">
-                  <button type="button" className="button button--ghost" onClick={() => handleCreateDirectChat(person.id)}>
-                    DM
-                  </button>
-                  <button
-                    type="button"
-                    className={classNames(
-                      "button button--ghost",
-                      groupForm.members.includes(person.id) && "is-active"
-                    )}
-                    onClick={() =>
-                      setGroupForm((current) => ({
-                        ...current,
-                        members: current.members.includes(person.id)
-                          ? current.members.filter((id) => id !== person.id)
-                          : [...current.members, person.id],
-                      }))
-                    }
-                  >
-                    Add
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
+              <div className="picker-list">
+                {userPickerResults.map((person) => (
+                  <article key={person.id} className="picker-item">
+                    <div>
+                      <strong>{person.name || "Unnamed user"}</strong>
+                      <span>{person.email}</span>
+                    </div>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className={classNames("button button--ghost", groupForm.members.includes(person.id) && "is-active")}
+                        onClick={() =>
+                          setGroupForm((current) => ({
+                            ...current,
+                            members: current.members.includes(person.id)
+                              ? current.members.filter((id) => id !== person.id)
+                              : [...current.members, person.id],
+                          }))
+                        }
+                      >
+                        {groupForm.members.includes(person.id) ? "Selected" : "Add"}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
 
-          <label className="field">
-            <span>Group name</span>
-            <input
-              value={groupForm.name}
-              onChange={(event) => setGroupForm((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Design review room"
-            />
-          </label>
+              <label className="field">
+                <span>Group name</span>
+                <input
+                  value={groupForm.name}
+                  onChange={(event) => setGroupForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Design review room"
+                />
+              </label>
 
-          <label className="field">
-            <span>Description</span>
-            <input
-              value={groupForm.description}
-              onChange={(event) => setGroupForm((current) => ({ ...current, description: event.target.value }))}
-              placeholder="Shared roadmap and handoff space"
-            />
-          </label>
+              <label className="field">
+                <span>Description</span>
+                <input
+                  value={groupForm.description}
+                  onChange={(event) => setGroupForm((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="Shared roadmap and handoff space"
+                />
+              </label>
 
-          <button type="button" className="button button--secondary" onClick={handleCreateGroup}>
-            Create group ({groupForm.members.length})
-          </button>
-        </div>
-
-        <div className="sidebar-section sidebar-section--fill">
-          <div className="sidebar-section__header">
-            <h2>Chats</h2>
-            <span className="status-pill">{filteredChats.length}</span>
-          </div>
-          <input
-            ref={sidebarSearchRef}
-            value={sidebarQuery}
-            onChange={(event) => setSidebarQuery(event.target.value)}
-            placeholder="Search conversations"
-          />
-
-          <div className="chat-list">
-            {filteredChats.map((chat) => {
-              const peerPresence = chat.directPeerPresence;
-              return (
-                <button
-                  key={chat.id}
-                  type="button"
-                  className={classNames("chat-card", chat.id === activeChatId && "is-active")}
-                  onClick={() => {
-                    setActiveChatId(chat.id);
-                    setWorkspaceTab("chat");
-                    setSidebarOpen(false);
-                  }}
-                >
-                  <div className="chat-card__topline">
-                    <strong>{chat.name || chat.type}</strong>
-                    <span>{formatTimestamp(chat.updatedAt)}</span>
-                  </div>
-                  <div className="chat-card__meta">
-                    <span>{chat.type}</span>
-                    {chat.unreadCount ? <span className="badge">{chat.unreadCount}</span> : null}
-                    {peerPresence?.isOnline ? <span className="presence-pill">Online</span> : null}
-                  </div>
-                  <p>{chat.lastMessage?.content || chat.description || "No messages yet."}</p>
+              <div className="row-actions">
+                <button type="button" className="button button--primary" onClick={handleCreateGroup}>
+                  Create group ({groupForm.members.length})
                 </button>
-              );
-            })}
-          </div>
+                <button type="button" className="button button--ghost" onClick={() => navigateToPage("rooms")}>
+                  Open rooms
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {currentPage === "rooms" ? (
+            <>
+              <label className="field">
+                <span>Search users</span>
+                <input
+                  value={userPickerQuery}
+                  onChange={(event) => setUserPickerQuery(event.target.value)}
+                  placeholder="Start a direct message"
+                />
+              </label>
+
+              <div className="picker-list">
+                {userPickerResults.map((person) => (
+                  <article key={person.id} className="picker-item">
+                    <div>
+                      <strong>{person.name || "Unnamed user"}</strong>
+                      <span>{person.email}</span>
+                    </div>
+                    <div className="row-actions">
+                      <button type="button" className="button button--ghost" onClick={() => handleCreateDirectChat(person.id)}>
+                        DM
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <div className="helper-box">
+                <strong>Live messaging</strong>
+                <p>Open direct chats and shared rooms here, with realtime status, polls, reactions, and inline AI help.</p>
+              </div>
+
+              <button type="button" className="button button--secondary" onClick={() => navigateToPage("groups")}>
+                Manage groups
+              </button>
+            </>
+          ) : null}
+
+          {currentPage === "settings" ? (
+            <>
+              <button type="button" className="button button--secondary" onClick={handleEnableNotifications}>
+                {notificationsEnabled ? "Notifications enabled" : "Enable notifications"}
+              </button>
+              <div className="segmented-control">
+                {["dark", "light"].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={classNames("button button--segmented", theme === value && "is-active")}
+                    onClick={() => setTheme(value)}
+                  >
+                    {value === "dark" ? "Dark" : "Light"}
+                  </button>
+                ))}
+              </div>
+              <div className="helper-box">
+                <strong>Local production setup</strong>
+                <p>This page keeps theme, notifications, admin access, and navigation in one predictable place.</p>
+              </div>
+            </>
+          ) : null}
         </div>
+
+        {currentPage === "settings" ? (
+          <div className="sidebar-section sidebar-section--fill">
+            <div className="sidebar-section__header">
+              <h2>Workspace Overview</h2>
+              <span className="status-pill">{user.isAdmin ? "ADMIN" : "MEMBER"}</span>
+            </div>
+
+            <div className="stats-grid">
+              <article className="stat-card">
+                <span>Solo chats</span>
+                <strong>{soloChats.length}</strong>
+              </article>
+              <article className="stat-card">
+                <span>Groups</span>
+                <strong>{groupChats.length}</strong>
+              </article>
+              <article className="stat-card">
+                <span>Unread</span>
+                <strong>{roomsUnreadCount}</strong>
+              </article>
+            </div>
+
+            <div className="helper-box">
+              <strong>Navigation</strong>
+              <p>Use the top bar to move between AI Chat, Groups, Rooms, and Settings without losing synced conversations.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="sidebar-section sidebar-section--fill">
+            <div className="sidebar-section__header">
+              <h2>{currentPage === "ai" ? "AI Threads" : currentPage === "groups" ? "Groups" : "Rooms"}</h2>
+              <span className="status-pill">{pageChats.length}</span>
+            </div>
+            <input
+              ref={sidebarSearchRef}
+              value={sidebarQuery}
+              onChange={(event) => setSidebarQuery(event.target.value)}
+              placeholder={
+                currentPage === "ai"
+                  ? "Search AI conversations"
+                  : currentPage === "groups"
+                    ? "Search groups"
+                    : "Search rooms and DMs"
+              }
+            />
+
+            <div className="chat-list">
+              {pageChats.length === 0 ? (
+                <p className="empty-copy">
+                  {currentPage === "ai"
+                    ? "No solo AI conversations match the current filters."
+                    : currentPage === "groups"
+                      ? "No groups found yet. Create one from the sidebar."
+                      : "No direct messages or rooms match the current filters."}
+                </p>
+              ) : null}
+              {pageChats.map((chat) => {
+                const peerPresence = chat.directPeerPresence;
+                return (
+                  <button
+                    key={chat.id}
+                    type="button"
+                    className={classNames("chat-card", chat.id === activeChatId && "is-active")}
+                    onClick={() => openChatOnCurrentPage(chat.id)}
+                  >
+                    <div className="chat-card__topline">
+                      <strong>{chat.name || chat.type}</strong>
+                      <span>{formatTimestamp(chat.updatedAt)}</span>
+                    </div>
+                    <div className="chat-card__meta">
+                      <span>{chat.type}</span>
+                      {chat.unreadCount ? <span className="badge">{chat.unreadCount}</span> : null}
+                      {peerPresence?.isOnline ? <span className="presence-pill">Online</span> : null}
+                    </div>
+                    <p>{chat.lastMessage?.content || chat.description || "No messages yet."}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="sidebar-section">
           <div className="sidebar-section__header">
-            <h2>Presence</h2>
-            <span className="status-pill">{onlineUsers.length}</span>
+            <h2>{currentPage === "settings" ? "Environment" : "Presence"}</h2>
+            <span className="status-pill">{currentPage === "settings" ? "Local" : onlineUsers.length}</span>
           </div>
 
-          <div className="presence-list">
-            {onlineUsers.length === 0 ? <p className="empty-copy">Nobody is online yet.</p> : null}
-            {onlineUsers.map((entry) => (
-              <div key={entry.user?.id || entry.userId} className="presence-item">
-                <span className="presence-dot" />
-                <div>
-                  <strong>{entry.user?.name || entry.user?.email || "Member"}</strong>
-                  <span>{entry.isOnline ? "Online now" : formatRelativeLastSeen(entry.lastSeenAt)}</span>
-                </div>
+          {currentPage === "settings" ? (
+            <div className="stack-list">
+              <div className="metric-row">
+                <span>Current route</span>
+                <strong>{PAGE_PATHS[currentPage]}</strong>
               </div>
-            ))}
-          </div>
+              <div className="metric-row">
+                <span>Models loaded</span>
+                <strong>{models.length}</strong>
+              </div>
+              <div className="metric-row">
+                <span>Realtime users</span>
+                <strong>{onlineUsers.length}</strong>
+              </div>
+            </div>
+          ) : (
+            <div className="presence-list">
+              {onlineUsers.length === 0 ? <p className="empty-copy">Nobody is online yet.</p> : null}
+              {onlineUsers.map((entry) => (
+                <div key={entry.user?.id || entry.userId} className="presence-item">
+                  <span className="presence-dot" />
+                  <div>
+                    <strong>{entry.user?.name || entry.user?.email || "Member"}</strong>
+                    <span>{entry.isOnline ? "Online now" : formatRelativeLastSeen(entry.lastSeenAt)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -2936,76 +3086,242 @@ export default function App() {
               Menu
             </button>
             <div>
-              <span className="eyebrow">{activeChat?.type || "Workspace"}</span>
-              <h2>{activeChat?.name || "Choose a chat to begin"}</h2>
-              <p>
-                {activeChat?.description ||
-                  "Solo AI, real-time rooms, memory graph, intelligence, imports, and admin tools in one place."}
-              </p>
+              <span className="eyebrow">{activePrimaryPage.label}</span>
+              <h2>{pageTitleMap[currentPage]}</h2>
+              <p>{pageDescriptionMap[currentPage]}</p>
             </div>
           </div>
 
           <div className="workspace-header__actions">
-            <label className="field field--compact">
-              <span>Model</span>
-              <select value={selectedModel} onChange={(event) => handleChangeModel(event.target.value)}>
-                <option value="">Default routing</option>
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="button" className="button button--secondary" onClick={() => loadWorkspace(activeChatId)}>
-              Refresh
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => setInfoPanelOpen((current) => !current)}>
-              Info
-            </button>
+            <nav className="primary-nav" aria-label="Primary pages">
+              {PRIMARY_PAGES.map((page) => (
+                <button
+                  key={page.id}
+                  type="button"
+                  className={classNames("primary-nav__button", currentPage === page.id && "is-active")}
+                  onClick={() => navigateToPage(page.id)}
+                >
+                  <span>{page.label}</span>
+                  {page.id === "rooms" && roomsUnreadCount ? <small>{roomsUnreadCount} unread</small> : null}
+                  {page.id === "groups" ? <small>{groupChats.length} groups</small> : null}
+                </button>
+              ))}
+            </nav>
+
+            {currentPage !== "settings" ? (
+              <>
+                <label className="field field--compact">
+                  <span>Model</span>
+                  <select value={selectedModel} onChange={(event) => handleChangeModel(event.target.value)}>
+                    <option value="">Default routing</option>
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" className="button button--secondary" onClick={() => loadWorkspace(activeChatId)}>
+                  Refresh
+                </button>
+                {currentPage !== "groups" ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => setInfoPanelOpen((current) => !current)}
+                    disabled={!activeChat || workspaceTab !== "chat"}
+                  >
+                    Info
+                  </button>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </header>
 
-        <nav className="workspace-tabs">
-          <button
-            type="button"
-            className={classNames("tab-button", workspaceTab === "chat" && "is-active")}
-            onClick={() => setWorkspaceTab("chat")}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            className={classNames("tab-button", workspaceTab === "memory" && "is-active")}
-            onClick={() => setWorkspaceTab("memory")}
-          >
-            Memory Graph
-          </button>
-          <button
-            type="button"
-            className={classNames("tab-button", workspaceTab === "intelligence" && "is-active")}
-            onClick={() => setWorkspaceTab("intelligence")}
-          >
-            Intelligence
-          </button>
-          <button
-            type="button"
-            className={classNames("tab-button", workspaceTab === "transfer" && "is-active")}
-            onClick={() => setWorkspaceTab("transfer")}
-          >
-            Import / Export
-          </button>
-          {showAdminTab ? (
-            <button
-              type="button"
-              className={classNames("tab-button", workspaceTab === "admin" && "is-active")}
-              onClick={() => setWorkspaceTab("admin")}
-            >
-              Admin
-            </button>
+        {pageTabs.length ? (
+          <nav className="workspace-tabs">
+            {pageTabs.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={classNames("tab-button", workspaceTab === value && "is-active")}
+                onClick={() => setWorkspaceTab(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        ) : null}
+
+        <section className={classNames("workspace-body", showConversationAside && "has-aside")}>
+          <div className="workspace-main">
+            {currentPage === "ai" ? (
+              <>
+                <section className="stats-grid page-summary">
+                  <article className="stat-card">
+                    <span>Solo threads</span>
+                    <strong>{soloChats.length}</strong>
+                  </article>
+                  <article className="stat-card">
+                    <span>Models</span>
+                    <strong>{models.length || "Auto"}</strong>
+                  </article>
+                  <article className="stat-card">
+                    <span>Memory nodes</span>
+                    <strong>{memoryGraph.nodes?.length || 0}</strong>
+                  </article>
+                </section>
+
+                {workspaceTab === "chat" ? renderConversationChatPanel() : null}
+                {workspaceTab === "memory" ? (
+                  <MemoryGraphPanel graph={memoryGraph} onRefresh={handleRefreshMemory} api={api} />
+                ) : null}
+                {workspaceTab === "intelligence" ? (
+                  <InsightsPanel
+                    chatId={activeChatId}
+                    chat={activeChat}
+                    insights={insights}
+                    loading={insightsLoading}
+                    onGenerate={handleGenerateInsights}
+                    onRefresh={handleRefreshInsights}
+                  />
+                ) : null}
+                {workspaceTab === "transfer" ? (
+                  <ImportExportPanel
+                    chat={activeChat}
+                    importForm={importForm}
+                    onImportChange={(field, value) => setImportForm((current) => ({ ...current, [field]: value }))}
+                    onImportSubmit={handleImportSubmit}
+                    onExport={handleExport}
+                    loading={transferLoading}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {currentPage === "groups" ? (
+              <>
+                {workspaceTab === "chat" ? renderGroupsWorkspace() : null}
+                {workspaceTab === "intelligence" ? (
+                  <InsightsPanel
+                    chatId={activeChatId}
+                    chat={activeChat}
+                    insights={insights}
+                    loading={insightsLoading}
+                    onGenerate={handleGenerateInsights}
+                    onRefresh={handleRefreshInsights}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {currentPage === "rooms" ? (
+              <>
+                <section className="stats-grid page-summary">
+                  <article className="stat-card">
+                    <span>Live rooms</span>
+                    <strong>{roomChats.length}</strong>
+                  </article>
+                  <article className="stat-card">
+                    <span>Unread</span>
+                    <strong>{roomsUnreadCount}</strong>
+                  </article>
+                  <article className="stat-card">
+                    <span>Online users</span>
+                    <strong>{onlineUsers.length}</strong>
+                  </article>
+                </section>
+
+                {workspaceTab === "chat" ? renderConversationChatPanel() : null}
+                {workspaceTab === "intelligence" ? (
+                  <InsightsPanel
+                    chatId={activeChatId}
+                    chat={activeChat}
+                    insights={insights}
+                    loading={insightsLoading}
+                    onGenerate={handleGenerateInsights}
+                    onRefresh={handleRefreshInsights}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {currentPage === "settings" ? renderSettingsWorkspace() : null}
+          </div>
+
+          {showConversationAside ? (
+            <aside className="workspace-aside">
+              <section className="card">
+                <span className="eyebrow">Conversation info</span>
+                <h3>{activeChat.name}</h3>
+                <p>{activeChat.description || "No description provided."}</p>
+                <div className="stack-list">
+                  <div className="metric-row">
+                    <span>Type</span>
+                    <strong>{activeChat.type}</strong>
+                  </div>
+                  <div className="metric-row">
+                    <span>Members</span>
+                    <strong>{activeChat.members?.length || 0}</strong>
+                  </div>
+                  <div className="metric-row">
+                    <span>Model</span>
+                    <strong>{activeChat.aiModel || "Default routing"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="card">
+                <span className="eyebrow">Participants</span>
+                <div className="stack-list">
+                  {(activeChat.members || []).map((member) => (
+                    <div key={member.id} className="participant-row">
+                      <div>
+                        <strong>{member.user?.name || member.user?.email || "Member"}</strong>
+                        <span>{member.role}</span>
+                      </div>
+                      <small>
+                        {presenceMap[member.userId]?.isOnline
+                          ? "Online"
+                          : formatRelativeLastSeen(presenceMap[member.userId]?.lastSeenAt)}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="card">
+                <span className="eyebrow">Pinned</span>
+                <div className="stack-list">
+                  {pinnedMessages.length === 0 ? <p className="empty-copy">No pinned messages yet.</p> : null}
+                  {pinnedMessages.map((message) => (
+                    <div key={message.id} className="helper-box">
+                      <strong>{message.senderName || message.senderEmail || "AI"}</strong>
+                      <p>{message.content.slice(0, 180)}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </aside>
           ) : null}
+        </section>
+
+        <nav className="mobile-nav">
+          {PRIMARY_PAGES.map((page) => (
+            <button
+              key={page.id}
+              type="button"
+              className={classNames("mobile-nav__button", currentPage === page.id && "is-active")}
+              onClick={() => navigateToPage(page.id)}
+            >
+              {page.label}
+            </button>
+          ))}
         </nav>
 
+        {false ? (
+          <>
         <section className={classNames("workspace-body", infoPanelOpen && "has-aside")}>
           <div className="workspace-main">
             {workspaceTab === "chat" ? (
@@ -3433,16 +3749,9 @@ export default function App() {
             </button>
           ))}
         </nav>
+          </>
+        ) : null}
       </main>
-
-      <SettingsDialog
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        theme={theme}
-        onThemeChange={setTheme}
-        notificationsEnabled={notificationsEnabled}
-        onEnableNotifications={handleEnableNotifications}
-      />
 
       <div className="toast-stack">
         {toasts.map((toast) => (
