@@ -1,45 +1,28 @@
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import { NextFunction, Request, Response } from "express";
+import { AppError } from "../helpers/errors";
+import { verifyAccessToken } from "../services/token.service";
 
-const JWT_SECRET = process.env.ACCESS_TOKEN_SECRET || "secret";
-
-// Extend Request type
-export interface AuthRequest extends Request {
-    user?: {
-        userId: string;
-    };
-}
+export type AuthRequest = Request & {
+    user: NonNullable<Request["user"]>;
+};
 
 export const protect = (
-    req: AuthRequest,
-    res: Response,
+    req: Request,
+    _res: Response,
     next: NextFunction
-) => {
+): void => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return next(new AppError("Unauthorized", 401, "UNAUTHORIZED"));
+    }
+
+    const token = authHeader.slice("Bearer ".length);
+
     try {
-        const authHeader = req.headers.authorization;
-
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({
-                success: false,
-                message: "Not authorized, no token",
-            });
-        }
-
-        const token = authHeader.split(" ")[1];
-
-        const decoded = jwt.verify(token, JWT_SECRET) as {
-            userId: string;
-        };
-
-        req.user = {
-            userId: decoded.userId,
-        };
-
+        req.user = verifyAccessToken(token);
         next();
-    } catch (error) {
-        return res.status(401).json({
-            success: false,
-            message: "Invalid or expired token",
-        });
+    } catch (_error) {
+        next(new AppError("Invalid or expired token", 401, "UNAUTHORIZED"));
     }
 };

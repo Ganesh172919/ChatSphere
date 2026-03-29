@@ -1,47 +1,64 @@
-import express from "express";
-import dotenv from "dotenv";
-import cors from "cors";
-import { PrismaClient } from "@prisma/client";
-import authRoutes from "./routes/auth.routes";
-import groupRoutes from "./routes/group.routes";
-import messageRoutes from "./routes/message.routes";
+import http from "http";
+import { createApp } from "./app";
+import { env } from "./config/env";
+import { runStartupChecks } from "./config/startup";
+import { disconnectPrisma } from "./config/prisma";
+import { logger } from "./helpers/logger";
+import { initializeSocketServer } from "./socket";
 
-dotenv.config();
+const gracefulShutdown = async (signal: string, server: http.Server) => {
+    logger.info("Shutdown signal received", { signal });
 
-const app = express();
-const prisma = new PrismaClient();
+    server.close(async () => {
+        try {
+            await disconnectPrisma();
+        } finally {
+            process.exit(0);
+        }
+    });
+};
 
-const PORT = process.env.PORT || 5000;
+const bootstrap = async () => {
+    await runStartupChecks();
 
-app.use(cors());
-app.use(express.json());
+    const app = createApp();
+    const server = http.createServer(app);
 
-// routes
-app.use("/api/auth", authRoutes);
-app.use("/api/groups", groupRoutes);
-app.use("/api/chats", messageRoutes);
+    initializeSocketServer(server);
 
-app.get("/", (req, res) => {
-    res.send("API Running");
-});
+    server.listen(env.port, () => {
+        logger.info("ChatSphere backend started", {
+            port: env.port,
+            env: env.nodeEnv,
+            clientUrl: env.clientUrl,
+        });
+    });
 
-// db test route
-app.get("/test-db", async (req, res) => {
-    try {
-        const users = await prisma.user.findMany();
-        res.json(users);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "DB error" });
-    }
-});
+    process.on("SIGINT", () => {
+        void gracefulShutdown("SIGINT", server);
+    });
 
-app.listen(PORT, async () => {
-    try {
-        await prisma.$connect();
-        console.log(" Database connected");
-        console.log(` Server running on port ${PORT}`);
-    } catch (error) {
-        console.error(" DB connection failed:", error);
-    }
+    process.on("SIGTERM", () => {
+        void gracefulShutdown("SIGTERM", server);
+    });
+
+    process.on("unhandledRejection", (reason) => {
+        logger.error("Unhandled promise rejection", {
+            reason,
+        });
+    });
+
+    process.on("uncaughtException", (error) => {
+        logger.error("Uncaught exception", {
+            error,
+        });
+    });
+};
+
+void bootstrap().catch((error) => {
+    logger.error("Bootstrap failed", {
+        error,
+    });
+
+    process.exit(1);
 });

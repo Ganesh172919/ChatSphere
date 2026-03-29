@@ -1,248 +1,348 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, RoomMemberRole } from "@prisma/client";
+import { prisma } from "../config/prisma";
+import { env } from "../config/env";
+import { AppError } from "../helpers/errors";
 
-const prisma = new PrismaClient();
+const toJson = (value: unknown): Prisma.InputJsonValue => {
+    return value as Prisma.InputJsonValue;
+};
 
-// SEND MESSAGE
-export const sendMessage = async (data: {
-    chatId: string;
-    senderId: string;
-    content: string;
-    type?: "TEXT" | "AI" | "FILE";
-}) => {
-    const { chatId, senderId, content, type = "TEXT" } = data;
-
-    if (!content || content.trim().length === 0) {
-        throw new Error("Message content is required");
+const parseJsonArray = <T>(value: unknown): T[] => {
+    if (!Array.isArray(value)) {
+        return [];
     }
 
-    if (content.length > 5000) {
-        throw new Error("Message cannot exceed 5000 characters");
+    return value as T[];
+};
+
+const parseReactions = (value: unknown): Record<string, string[]> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return {};
     }
 
-    // Check if chat exists
-    const chat = await prisma.chat.findUnique({
-        where: { id: chatId },
-    });
+    const output: Record<string, string[]> = {};
 
-    if (!chat) {
-        throw new Error("Chat not found");
+    for (const [emoji, users] of Object.entries(value as Record<string, unknown>)) {
+        output[emoji] = Array.isArray(users)
+            ? users.map((entry) => String(entry))
+            : [];
     }
 
-    // Check if user is a member of the chat
-    const isMember = await prisma.chatMember.findUnique({
+    return output;
+};
+
+const assertRoomMembership = async (userId: string, roomId: string) => {
+    const member = await prisma.roomMember.findUnique({
         where: {
-            userId_chatId: {
-                userId: senderId,
-                chatId,
+            roomId_userId: {
+                roomId,
+                userId,
             },
         },
     });
 
-    if (!isMember) {
-        throw new Error("Unauthorized: Not a member of this chat");
+    if (!member) {
+        throw new AppError("Not a room member", 403, "FORBIDDEN");
     }
 
-    // Create message
+    return member;
+};
+
+const ensureNoBlockRelation = async (actorId: string, targetId: string) => {
+    const blocked = await prisma.userBlock.findFirst({
+        where: {
+            OR: [
+                {
+                    blockerId: actorId,
+                    blockedId: targetId,
+                },
+                {
+                    blockerId: targetId,
+                    blockedId: actorId,
+                },
+            ],
+        },
+    });
+
+    if (blocked) {
+        throw new AppError("Message blocked due to user block relationship", 403, "FORBIDDEN");
+    }
+};
+
+export const sendRoomMessage = async (payload: {
+    roomId: string;
+    userId: string;
+    content: string;
+    isAI?: boolean;
+    triggeredBy?: string;
+    replyTo?: { messageId: string; snippet?: string };
+    file?: {
+        fileUrl?: string;
+        fileName?: string;
+        fileType?: string;
+        fileSize?: number;
+    };
+    memoryRefs?: string[];
+    model?: {
+        modelId?: string;
+        modelProvider?: string;
+        telemetry?: Record<string, unknown>;
+    };
+}) => {
+    const content = payload.content.trim();
+
+    if (content.length === 0) {
+        throw new AppError("Message content is required", 400, "VALIDATION_ERROR");
+    }
+
+    if (content.length > 6000) {
+        throw new AppError("Message exceeds maximum length", 400, "VALIDATION_ERROR");
+    }
+
+    const member = await assertRoomMembership(payload.userId, payload.roomId);
+
+    if (payload.replyTo?.messageId) {
+        const repliedMessage = await prisma.message.findUnique({
+            where: {
+                id: payload.replyTo.messageId,
+            },
+            select: {
+                id: true,
+                userId: true,
+                content: true,
+            },
+        });
+
+        if (!repliedMessage) {
+            throw new AppError("Reply target not found", 404, "NOT_FOUND");
+        }
+
+        await ensureNoBlockRelation(payload.userId, repliedMessage.userId);
+    }
+
+    const user = await prisma.user.findUnique({
+        where: {
+            id: payload.userId,
+        },
+        select: {
+            username: true,
+            displayName: true,
+        },
+    });
+
+    if (!user) {
+        throw new AppError("User not found", 404, "NOT_FOUND");
+    }
+
     const message = await prisma.message.create({
         data: {
+            roomId: payload.roomId,
+            userId: payload.userId,
+            username: user.displayName || user.username,
             content,
-            type,
-            chatId,
-            senderId,
-        },
-        include: {
-            sender: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                },
-            },
+            isAI: Boolean(payload.isAI),
+            triggeredBy: payload.triggeredBy,
+            replyTo: payload.replyTo ? toJson(payload.replyTo) : undefined,
+            status: "SENT",
+            readBy: toJson([payload.userId]),
+            fileUrl: payload.file?.fileUrl,
+            fileName: payload.file?.fileName,
+            fileType: payload.file?.fileType,
+            fileSize: payload.file?.fileSize,
+            memoryRefs: toJson(payload.memoryRefs ?? []),
+            modelId: payload.model?.modelId,
+            modelProvider: payload.model?.modelProvider,
+            modelTelemetry: payload.model?.telemetry
+                ? toJson(payload.model.telemetry)
+                : undefined,
         },
     });
 
-    // Update chat's updatedAt timestamp
-    await prisma.chat.update({
-        where: { id: chatId },
+    await prisma.room.update({
+        where: {
+            id: payload.roomId,
+        },
         data: {
             updatedAt: new Date(),
         },
     });
 
     return {
-        id: message.id,
-        content: message.content,
-        type: message.type,
-        chatId: message.chatId,
-        senderId: message.sender.id,
-        senderName: message.sender.name,
-        senderEmail: message.sender.email,
-        createdAt: message.createdAt,
+        ...message,
+        senderRole: member.role,
     };
 };
 
-// GET MESSAGES FROM CHAT
-export const getMessages = async (
-    chatId: string,
+export const getRoomMessages = async (
     userId: string,
-    limit: number = 50,
-    skip: number = 0
+    roomId: string,
+    limit = 50,
+    skip = 0
 ) => {
-    // Check if chat exists
-    const chat = await prisma.chat.findUnique({
-        where: { id: chatId },
-    });
+    await assertRoomMembership(userId, roomId);
 
-    if (!chat) {
-        throw new Error("Chat not found");
-    }
-
-    // Check if user is a member
-    const isMember = await prisma.chatMember.findUnique({
-        where: {
-            userId_chatId: {
-                userId,
-                chatId,
-            },
-        },
-    });
-
-    if (!isMember) {
-        throw new Error("Unauthorized: Not a member of this chat");
-    }
+    const boundedLimit = Math.max(1, Math.min(limit, 100));
 
     const messages = await prisma.message.findMany({
-        where: { chatId },
-        include: {
-            sender: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                },
-            },
+        where: {
+            roomId,
+            isDeleted: false,
         },
-        orderBy: { createdAt: "desc" },
-        take: limit,
+        orderBy: {
+            createdAt: "desc",
+        },
+        take: boundedLimit,
         skip,
     });
 
     return {
         total: messages.length,
-        messages: messages.reverse().map((msg) => ({
-            id: msg.id,
-            content: msg.content,
-            type: msg.type,
-            senderId: msg.sender.id,
-            senderName: msg.sender.name,
-            senderEmail: msg.sender.email,
-            createdAt: msg.createdAt,
-        })),
+        messages: messages.reverse(),
     };
 };
 
-// DELETE MESSAGE
-export const deleteMessage = async (
-    messageId: string,
-    userId: string
+export const markMessagesRead = async (
+    userId: string,
+    roomId: string,
+    messageIds: string[]
 ) => {
-    const message = await prisma.message.findUnique({
-        where: { id: messageId },
-        include: {
-            chat: true,
+    await assertRoomMembership(userId, roomId);
+
+    const messages = await prisma.message.findMany({
+        where: {
+            id: {
+                in: messageIds,
+            },
+            roomId,
         },
     });
 
-    if (!message) {
-        throw new Error("Message not found");
-    }
+    for (const message of messages) {
+        const readBy = new Set(parseJsonArray<string>(message.readBy));
+        readBy.add(userId);
 
-    // Only sender or chat admins can delete
-    if (message.senderId !== userId) {
-        const userRole = await prisma.chatMember.findUnique({
+        await prisma.message.update({
             where: {
-                userId_chatId: {
-                    userId,
-                    chatId: message.chatId,
-                },
+                id: message.id,
+            },
+            data: {
+                readBy: toJson(Array.from(readBy)),
+                status: "READ",
             },
         });
-
-        if (!userRole || userRole.role !== "ADMIN") {
-            throw new Error("Unauthorized: Cannot delete this message");
-        }
     }
 
-    await prisma.message.delete({
-        where: { id: messageId },
-    });
-
     return {
-        success: true,
-        message: "Message deleted successfully",
+        updated: messages.map((message) => message.id),
     };
 };
 
-// EDIT MESSAGE
-export const editMessage = async (
+export const addReaction = async (
+    userId: string,
     messageId: string,
-    newContent: string,
-    userId: string
+    emoji: string
 ) => {
-    if (!newContent || newContent.trim().length === 0) {
-        throw new Error("Message content is required");
-    }
-
-    if (newContent.length > 5000) {
-        throw new Error("Message cannot exceed 5000 characters");
-    }
-
     const message = await prisma.message.findUnique({
-        where: { id: messageId },
-        include: {
-            sender: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                },
-            },
+        where: {
+            id: messageId,
         },
     });
 
     if (!message) {
-        throw new Error("Message not found");
+        throw new AppError("Message not found", 404, "NOT_FOUND");
     }
 
-    // Only sender can edit
-    if (message.senderId !== userId) {
-        throw new Error("Unauthorized: Cannot edit this message");
+    await assertRoomMembership(userId, message.roomId);
+
+    const reactions = parseReactions(message.reactions);
+    const users = new Set(reactions[emoji] ?? []);
+
+    if (users.has(userId)) {
+        users.delete(userId);
+    } else {
+        users.add(userId);
     }
 
-    const updatedMessage = await prisma.message.update({
-        where: { id: messageId },
-        data: {
-            content: newContent,
+    reactions[emoji] = Array.from(users);
+
+    return prisma.message.update({
+        where: {
+            id: message.id,
         },
-        include: {
-            sender: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                },
-            },
+        data: {
+            reactions: toJson(reactions),
+        },
+    });
+};
+
+export const editMessage = async (
+    userId: string,
+    messageId: string,
+    content: string
+) => {
+    const message = await prisma.message.findUnique({
+        where: {
+            id: messageId,
         },
     });
 
-    return {
-        id: updatedMessage.id,
-        content: updatedMessage.content,
-        type: updatedMessage.type,
-        senderId: updatedMessage.sender.id,
-        senderName: updatedMessage.sender.name,
-        senderEmail: updatedMessage.sender.email,
-        createdAt: updatedMessage.createdAt,
-        updated: true,
-    };
+    if (!message || message.isDeleted) {
+        throw new AppError("Message not found", 404, "NOT_FOUND");
+    }
+
+    if (message.userId !== userId) {
+        throw new AppError("Only message owner can edit this message", 403, "FORBIDDEN");
+    }
+
+    const ageMs = Date.now() - message.createdAt.getTime();
+    const maxAgeMs = env.messageEditWindowMinutes * 60 * 1000;
+
+    if (ageMs > maxAgeMs) {
+        throw new AppError("Message edit window has expired", 400, "EDIT_WINDOW_EXPIRED");
+    }
+
+    return prisma.message.update({
+        where: {
+            id: message.id,
+        },
+        data: {
+            content: content.trim(),
+            isEdited: true,
+            editedAt: new Date(),
+        },
+    });
+};
+
+export const softDeleteMessage = async (userId: string, messageId: string) => {
+    const message = await prisma.message.findUnique({
+        where: {
+            id: messageId,
+        },
+    });
+
+    if (!message) {
+        throw new AppError("Message not found", 404, "NOT_FOUND");
+    }
+
+    const membership = await assertRoomMembership(userId, message.roomId);
+
+    const isOwner = message.userId === userId;
+    const isModerator =
+        membership.role === RoomMemberRole.ADMIN || membership.role === RoomMemberRole.MODERATOR;
+
+    if (!isOwner && !isModerator) {
+        throw new AppError("Not allowed to delete this message", 403, "FORBIDDEN");
+    }
+
+    return prisma.message.update({
+        where: {
+            id: message.id,
+        },
+        data: {
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: userId,
+            content: "[deleted]",
+        },
+    });
 };
