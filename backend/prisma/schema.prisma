@@ -1,85 +1,313 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
 generator client {
   provider = "prisma-client-js"
+  engineType = "binary"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  password  String
-  refreshToken String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  chats     ChatMember[]
-  messages  Message[]
+  id                   String            @id @default(uuid())
+  username             String            @unique
+  email                String            @unique
+  passwordHash         String?
+  googleId             String?           @unique
+  avatar               String?
+  displayName          String?
+  bio                  String?           @db.VarChar(500)
+  authProvider         AuthProvider      @default(LOCAL)
+  onlineStatus         Boolean           @default(false)
+  lastSeen             DateTime          @default(now())
+  settings             Json              @default("{\"theme\":\"system\",\"accentColor\":\"teal\",\"notifications\":{\"email\":true,\"push\":true,\"mentions\":true},\"aiFeatures\":{\"smartReplies\":true,\"sentiment\":true,\"grammar\":true}}")
+  isAdmin              Boolean           @default(false)
+  resetPasswordToken   String?
+  resetPasswordExpires DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  refreshTokens        RefreshToken[]
+  roomsCreated         Room[]            @relation("RoomCreator")
+  roomMemberships      RoomMember[]
+  messages             Message[]
+  conversations        Conversation[]
+  memories             MemoryEntry[]
+  imports              ImportSession[]
+  projects             Project[]
+  pollsCreated         Poll[]
+  reportsFiled         Report[]          @relation("ReportReporter")
+  reportsReviewed      Report[]          @relation("ReportReviewer")
+  blocksInitiated      UserBlock[]       @relation("BlockerRelation")
+  blocksReceived       UserBlock[]       @relation("BlockedRelation")
 }
 
-model Chat {
+model RefreshToken {
   id        String   @id @default(uuid())
-  type      ChatType
-  name      String?   // only for group chats
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  // Relations
-  members   ChatMember[]
-  messages  Message[]
-}
-
-model ChatMember {
-  id        String   @id @default(uuid())
+  token     String   @unique
   userId    String
-  chatId    String
-  role      ChatRole @default(MEMBER)
-  joinedAt  DateTime @default(now())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Relations
-  user      User @relation(fields: [userId], references: [id])
-  chat      Chat @relation(fields: [chatId], references: [id])
+  @@index([userId])
+  @@index([expiresAt])
+}
 
-  @@unique([userId, chatId])
+model Room {
+  id          String       @id @default(uuid())
+  name        String
+  description String?
+  tags        Json         @default("[]")
+  maxUsers    Int          @default(100)
+  creatorId   String
+  aiHistory   Json         @default("[]")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  creator     User         @relation("RoomCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  members     RoomMember[]
+  messages    Message[]
+  polls       Poll[]
+  reports     Report[]
+
+  @@index([creatorId])
+  @@index([updatedAt])
+}
+
+model RoomMember {
+  id       String         @id @default(uuid())
+  roomId   String
+  userId   String
+  role     RoomMemberRole @default(MEMBER)
+  joinedAt DateTime       @default(now())
+  room     Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
 }
 
 model Message {
-  id        String        @id @default(uuid())
-  content   String
-  type      MessageType   @default(TEXT)
+  id             String        @id @default(uuid())
+  roomId         String
+  userId         String
+  username       String
+  content        String
+  isAI           Boolean       @default(false)
+  triggeredBy    String?
+  replyTo        Json?
+  reactions      Json          @default("{}")
+  status         MessageStatus @default(SENT)
+  readBy         Json          @default("[]")
+  isPinned       Boolean       @default(false)
+  pinnedAt       DateTime?
+  pinnedBy       String?
+  isEdited       Boolean       @default(false)
+  editedAt       DateTime?
+  isDeleted      Boolean       @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  fileUrl        String?
+  fileName       String?
+  fileType       String?
+  fileSize       Int?
+  memoryRefs     Json          @default("[]")
+  modelId        String?
+  modelProvider  String?
+  modelTelemetry Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  room           Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  chatId    String
-  senderId  String
+  @@index([roomId, createdAt])
+  @@index([roomId, isPinned])
+  @@index([userId, createdAt])
+  @@index([content])
+}
 
+model Conversation {
+  id             String   @id @default(uuid())
+  userId         String
+  title          String
+  messages       Json     @default("[]")
+  projectId      String?
+  importMetadata Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, updatedAt])
+}
+
+model ConversationInsight {
+  id              String          @id @default(uuid())
+  scopeKey        String          @unique
+  scopeType       InsightScopeType
+  title           String
+  summary         String
+  intent          String?
+  topics          Json            @default("[]")
+  decisions       Json            @default("[]")
+  actionItems     Json            @default("[]")
+  messageCount    Int             @default(0)
+  lastGeneratedAt DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([scopeType, lastGeneratedAt])
+}
+
+model MemoryEntry {
+  id               String   @id @default(uuid())
+  userId           String
+  fingerprint      String
+  summary          String
+  details          String?
+  tags             Json     @default("[]")
+  sourceReferences Json     @default("[]")
+  confidence       Float    @default(0.5)
+  importance       Float    @default(0.5)
+  recency          Float    @default(0.5)
+  pinned           Boolean  @default(false)
+  usageCount       Int      @default(0)
+  lastUsedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fingerprint])
+  @@index([userId, pinned, updatedAt])
+}
+
+model ImportSession {
+  id                 String   @id @default(uuid())
+  userId             String
+  contentFingerprint String
+  mode               String
+  sourceType         String?
+  preview            Json?
+  importResult       Json?
+  createdAt          DateTime @default(now())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contentFingerprint])
+  @@index([createdAt])
+}
+
+model Project {
+  id               String         @id @default(uuid())
+  userId           String
+  name             String
+  description      String?
+  instructions     String?
+  context          String?
+  tags             Json           @default("[]")
+  suggestedPrompts Json           @default("[]")
+  files            Json           @default("[]")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations    Conversation[]
+
+  @@index([userId, updatedAt])
+}
+
+model Poll {
+  id                 String   @id @default(uuid())
+  roomId             String
+  creatorId          String
+  question           String
+  options            Json
+  allowMultipleVotes Boolean  @default(false)
+  anonymous          Boolean  @default(false)
+  expiresAt          DateTime?
+  closed             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  room               Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  creator            User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+}
+
+model PromptTemplate {
+  id          String   @id @default(uuid())
+  key         String
+  version     Int      @default(1)
+  description String?
+  content     String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([key, version])
+  @@index([key, isActive])
+}
+
+model Report {
+  id             String         @id @default(uuid())
+  reporterId     String
+  targetType     ReportTargetType
+  targetId       String
+  roomId         String?
+  reason         String
+  description    String?
+  status         ReportStatus   @default(PENDING)
+  reviewedById   String?
+  reviewedAt     DateTime?
+  resolutionNote String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  reporter       User           @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reviewedBy     User?          @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  room           Room?          @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+}
+
+model UserBlock {
+  id        String   @id @default(uuid())
+  blockerId String
+  blockedId String
   createdAt DateTime @default(now())
+  blocker   User     @relation("BlockerRelation", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("BlockedRelation", fields: [blockedId], references: [id], onDelete: Cascade)
 
-  // Relations
-  chat      Chat @relation(fields: [chatId], references: [id])
-  sender    User @relation(fields: [senderId], references: [id])
-
-  @@index([chatId, createdAt])
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
 }
 
-enum ChatType {
-  DIRECT
-  GROUP
+enum AuthProvider {
+  LOCAL
+  GOOGLE
 }
 
-enum ChatRole {
+enum RoomMemberRole {
   ADMIN
+  MODERATOR
   MEMBER
 }
 
-enum MessageType {
-  TEXT
-  AI
-  FILE
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+}
+
+enum InsightScopeType {
+  CONVERSATION
+  ROOM
+}
+
+enum ReportTargetType {
+  USER
+  MESSAGE
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  REJECTED
 }
