@@ -12,23 +12,36 @@ const parseWithSchema = <T>(schema: ZodSchema<T>, payload: unknown): T => {
     return result.data;
 };
 
+const setRequestValue = <K extends "body" | "params" | "query">(
+    req: Request,
+    key: K,
+    value: Request[K]
+) => {
+    Object.defineProperty(req, key, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value,
+    });
+};
+
 export const validateBody = <T>(schema: ZodSchema<T>) => {
     return (req: Request, _res: Response, next: NextFunction): void => {
-        req.body = parseWithSchema(schema, req.body);
+        setRequestValue(req, "body", parseWithSchema(schema, req.body) as Request["body"]);
         next();
     };
 };
 
 export const validateParams = <T>(schema: ZodSchema<T>) => {
     return (req: Request, _res: Response, next: NextFunction): void => {
-        req.params = parseWithSchema(schema, req.params) as Request["params"];
+        setRequestValue(req, "params", parseWithSchema(schema, req.params) as Request["params"]);
         next();
     };
 };
 
 export const validateQuery = <T>(schema: ZodSchema<T>) => {
     return (req: Request, _res: Response, next: NextFunction): void => {
-        req.query = parseWithSchema(schema, req.query) as Request["query"];
+        setRequestValue(req, "query", parseWithSchema(schema, req.query) as Request["query"]);
         next();
     };
 };

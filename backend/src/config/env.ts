@@ -40,6 +40,7 @@ export const env = {
     jsonBodyLimit: "5mb",
     uploadMaxSizeBytes: 5 * 1024 * 1024,
     uploadDirectory: path.join(process.cwd(), "uploads"),
+    authRateLimitMax: parseInteger(process.env.AUTH_RATE_LIMIT_MAX, 20),
     requestTimeoutMs: parseInteger(process.env.AI_REQUEST_TIMEOUT_MS, 30000),
     aiContextMessageLimit: parseInteger(process.env.AI_CONTEXT_MESSAGE_LIMIT, 18),
     aiQuotaWindowMs: 15 * 60 * 1000,

@@ -18,7 +18,7 @@ const resolveIdentity = (req: Request): string => {
 export const authLimiter = rateLimit({
     ...baseOptions,
     windowMs: 15 * 60 * 1000,
-    max: 20,
+    max: env.authRateLimitMax,
     keyGenerator: (req) => ipKeyGenerator(req.ip ?? "unknown"),
     message: {
         success: false,

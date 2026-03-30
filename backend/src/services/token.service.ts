@@ -1,5 +1,6 @@
 import jwt, { SignOptions } from "jsonwebtoken";
 import { env } from "../config/env";
+import { AppError } from "../helpers/errors";
 import { TokenPayload, AuthContext } from "../types/auth";
 
 export const generateAccessToken = (payload: TokenPayload): string => {
@@ -15,9 +16,17 @@ export const generateRefreshToken = (payload: TokenPayload): string => {
 };
 
 export const verifyAccessToken = (token: string): AuthContext => {
-    return jwt.verify(token, env.accessTokenSecret) as AuthContext;
+    try {
+        return jwt.verify(token, env.accessTokenSecret) as AuthContext;
+    } catch {
+        throw new AppError("Invalid access token", 401, "UNAUTHORIZED");
+    }
 };
 
 export const verifyRefreshToken = (token: string): AuthContext => {
-    return jwt.verify(token, env.refreshTokenSecret) as AuthContext;
+    try {
+        return jwt.verify(token, env.refreshTokenSecret) as AuthContext;
+    } catch {
+        throw new AppError("Invalid refresh token", 401, "UNAUTHORIZED");
+    }
 };

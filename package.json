@@ -1,4 +1,11 @@
 {
+  "private": true,
+  "scripts": {
+    "frontend:dev": "npm run dev --prefix frontend",
+    "frontend:check": "npm run check --prefix frontend",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
   "dependencies": {
     "@prisma/client": "^7.6.0"
   }

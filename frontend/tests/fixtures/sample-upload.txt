@@ -1,0 +1,2 @@
+ChatSphere upload validation artifact.
+This file verifies attachment upload and rendering paths.

@@ -202,11 +202,17 @@ export const rotateRefreshToken = async (refreshToken: string) => {
         throw new AppError("Invalid refresh token", 401, "UNAUTHORIZED");
     }
 
-    await prisma.refreshToken.delete({
+    const deleted = await prisma.refreshToken.deleteMany({
         where: {
             id: existing.id,
+            userId: decoded.userId,
+            token: tokenHash,
         },
     });
+
+    if (deleted.count === 0) {
+        throw new AppError("Invalid refresh token", 401, "UNAUTHORIZED");
+    }
 
     const tokens = await issueTokenPair(existing.user);
 

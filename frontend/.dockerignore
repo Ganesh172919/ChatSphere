@@ -1,0 +1,14 @@
+node_modules
+dist
+playwright-report
+test-results
+coverage
+npm-debug.log
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+frontend-runtime.log
+playwright-output.log
+vitest-output.log
