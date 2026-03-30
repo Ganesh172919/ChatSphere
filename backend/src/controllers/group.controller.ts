@@ -54,6 +54,13 @@ export const getGroup = async (req: AuthRequest, res: Response) => {
             });
         }
 
+        if (!groupId || typeof groupId !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Group ID is required",
+            });
+        }
+
         const group = await groupService.getGroupChat(groupId, userId);
 
         res.status(200).json({
@@ -122,6 +129,13 @@ export const addMember = async (req: AuthRequest, res: Response) => {
             });
         }
 
+        if (!groupId || typeof groupId !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Group ID is required",
+            });
+        }
+
         const result = await groupService.addMemberToGroup(
             groupId,
             userIdToAdd,
@@ -165,6 +179,12 @@ export const removeMember = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({
                 success: false,
                 message: "User ID to remove is required",
+            });
+        }
+        if (!groupId || typeof groupId !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Group ID is required",
             });
         }
 
@@ -211,6 +231,13 @@ export const updateGroup = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({
                 success: false,
                 message: "Group name is required",
+            });
+        }
+
+        if (!groupId || typeof groupId !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Group ID is required",
             });
         }
 
@@ -268,6 +295,13 @@ export const changeMemberRole = async (req: AuthRequest, res: Response) => {
             });
         }
 
+        if (!groupId || typeof groupId !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Group ID is required",
+            });
+        }
+
         const result = await groupService.changeMemberRole(
             groupId,
             userIdToChangeRole,
@@ -305,6 +339,13 @@ export const deleteGroup = async (req: AuthRequest, res: Response) => {
             return res.status(401).json({
                 success: false,
                 message: "Unauthorized",
+            });
+        }
+
+        if (!groupId || typeof groupId !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Group ID is required",
             });
         }
 
