@@ -410,12 +410,13 @@ export default function GroupChat() {
     scrollToBottom();
   }, [currentRoom?.messages.length, aiThinking, scrollToBottom]);
 
-  // Auto-resize textarea
+  // Auto-resize textarea (avoid layout jump by never collapsing to 0)
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
-    }
+    const el = textareaRef.current;
+    if (!el) return;
+    // Reset to single-row min height, then expand to content
+    el.style.height = '40px';
+    el.style.height = Math.max(40, Math.min(el.scrollHeight, 120)) + 'px';
   }, [input]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -595,12 +596,12 @@ export default function GroupChat() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-navy-900">
+    <div className="h-screen flex flex-col bg-navy-900 overflow-hidden">
       <Navbar />
 
-      <div className="flex flex-1 pt-16 overflow-hidden">
+      <div className="flex h-[calc(100vh-4rem)] mt-16 overflow-hidden">
         {/* Left panel — room info */}
-        <div className="hidden lg:flex w-64 flex-col border-r border-navy-700/50 bg-navy-800">
+        <div className="hidden lg:flex w-64 flex-col border-r border-navy-700/50 bg-navy-800 overflow-y-auto">
           <div className="p-4 border-b border-navy-700/50">
             <Link
               to="/rooms"
@@ -735,7 +736,7 @@ export default function GroupChat() {
         </div>
 
         {/* Center panel — chat */}
-        <main className="flex-1 flex flex-col min-w-0" role="main">
+        <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden" role="main">
           {/* Room header (mobile) */}
           <div className="flex items-center gap-3 px-4 py-2 border-b border-navy-800/50 lg:hidden">
             <Link to="/rooms" className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-navy-800 transition-all" aria-label="Back to rooms">
@@ -762,7 +763,7 @@ export default function GroupChat() {
           </div>
 
           {(roomConnectionError || (!loadingModels && availableModels.length === 0)) && (
-            <div className="border-b border-navy-800/50 bg-navy-800/80 px-4 py-2 text-xs text-amber-300">
+            <div className="border-b border-navy-800/50 bg-navy-800/80 px-4 py-2 text-xs text-amber-300 flex-shrink-0">
               <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
                 <span className="min-w-0 truncate">
                   {roomConnectionError || emptyModelMessage || 'No AI models are configured. Add provider API keys in backend/.env.'}
@@ -788,7 +789,7 @@ export default function GroupChat() {
           )}
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-2 py-4" role="log" aria-live="polite">
+          <div className="flex-1 overflow-y-auto px-2 py-4 min-h-0" role="log" aria-live="polite">
             <div className="max-w-3xl mx-auto space-y-1">
               {polls.length > 0 && (
                 <div className="mb-4 space-y-3">
@@ -847,7 +848,7 @@ export default function GroupChat() {
                   canEdit={msg.userId === user?.id && !msg.isDeleted}
                   canDelete={(msg.userId === user?.id || canModerateMessages) && !msg.isDeleted}
                   index={i}
-                  memoryRefs={msg.memoryRefs}
+                  memoryRefs={msg.isAI ? msg.memoryRefs : undefined}
                   sentiment={messageSentiments[msg.id] || null}
                   modelId={msg.modelId}
                   provider={msg.provider}
@@ -879,17 +880,19 @@ export default function GroupChat() {
           </div>
 
           {/* Smart replies */}
-          {currentRoom && currentRoom.messages.length > 0 && (
-            <SmartReplies
-              messages={currentRoom.messages.slice(-6).map(m => ({
-                username: m.username,
-                content: m.content,
-              }))}
-              context={`Group chat room: ${currentRoom.name}`}
-              modelId={selectedModelId || activeModel?.id}
-              onSelect={(reply) => setInput(reply)}
-            />
-          )}
+          <div className="flex-shrink-0">
+            {currentRoom && currentRoom.messages.length > 0 && currentRoom.messages[currentRoom.messages.length - 1]?.isAI && (
+              <SmartReplies
+                messages={currentRoom.messages.slice(-6).map(m => ({
+                  username: m.username,
+                  content: m.content,
+                }))}
+                context={`Group chat room: ${currentRoom.name}`}
+                modelId={selectedModelId || activeModel?.id}
+                onSelect={(reply) => setInput(reply)}
+              />
+            )}
+          </div>
 
           {/* Reply indicator */}
           <AnimatePresence>
@@ -898,7 +901,7 @@ export default function GroupChat() {
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                className="border-t border-navy-800/50 px-4 py-2 bg-navy-800/50"
+                className="border-t border-navy-800/50 px-4 py-2 bg-navy-800/50 flex-shrink-0"
               >
                 <div className="max-w-3xl mx-auto flex items-center gap-2 text-xs">
                   <span className="text-gray-500">Replying to</span>
@@ -912,8 +915,8 @@ export default function GroupChat() {
             )}
           </AnimatePresence>
 
-          {/* Input area */}
-          <div className="border-t border-navy-800/50 px-4 py-3">
+          {/* Input area — pinned to bottom */}
+          <div className="border-t border-navy-800/50 px-4 py-3 flex-shrink-0">
             <div className="max-w-3xl mx-auto">
               <GrammarSuggestion
                 text={input}
@@ -991,7 +994,7 @@ export default function GroupChat() {
                   onKeyDown={handleKeyDown}
                   placeholder="Message #room, attach a file, or type @ai for AI..."
                   rows={1}
-                  className="flex-1 bg-transparent text-white placeholder-gray-600 resize-none text-sm focus:outline-none max-h-32"
+                  className="flex-1 bg-transparent text-white placeholder-gray-600 resize-none text-sm focus:outline-none max-h-32 min-h-[2.5rem]"
                   aria-label="Message input"
                 />
                 <button

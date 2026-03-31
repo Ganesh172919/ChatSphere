@@ -348,17 +348,37 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // -- join_room (with membership enforcement) --
+  // -- join_room (with auto-membership) --
   socket.on('join_room', async (roomId, callback) => {
     const ack = getAck(callback);
     if (isFlooded(socket, ack)) return;
 
     try {
       console.log(`→ [ROOM] ${socket.user.username} requested join_room for ${roomId}`);
-      const { room, error } = await loadRoomForMember(roomId, socket.user.id, 'members');
-      if (error) {
-        console.warn(`⚠ [ROOM] join_room denied for ${socket.user.username}: ${error}`);
-        return emitSocketError(socket, ack, error);
+
+      if (!isValidObjectId(roomId)) {
+        return emitSocketError(socket, ack, 'Invalid room ID');
+      }
+
+      let room = await Room.findById(roomId).select('members maxUsers');
+      if (!room) {
+        return emitSocketError(socket, ack, 'Room not found');
+      }
+
+      // Auto-add user to room if not already a member
+      if (!findRoomMember(room, socket.user.id)) {
+        if (room.members.length >= room.maxUsers) {
+          console.warn(`⚠ [ROOM] join_room denied for ${socket.user.username}: Room is full`);
+          return emitSocketError(socket, ack, 'This room is already full');
+        }
+
+        room.members.push({
+          userId: socket.user.id,
+          role: 'member',
+          joinedAt: new Date(),
+        });
+        await room.save();
+        console.log(`✦ [ROOM] ${socket.user.username} auto-joined room ${roomId} via socket`);
       }
 
       if (isSocketInRoom(roomId, socket.id)) {
@@ -558,23 +578,7 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
-      if (textContent) {
-        const memoryEntries = await upsertMemoryEntries({
-          userId: socket.user.id,
-          text: textContent,
-          sourceType: 'room',
-          sourceRoomId: roomId,
-          sourceMessageId: msg._id,
-        });
-
-        if (memoryEntries.length > 0) {
-          msg.memoryRefs = memoryEntries.slice(0, 3).map((entry) => ({
-            id: entry._id.toString(),
-            summary: entry.summary,
-          }));
-          await msg.save();
-        }
-      }
+      // Memory extraction is only performed when @ai is triggered via room_ai_chat
 
       await maybeMarkMessageDelivered(msg, roomId);
       await refreshRoomInsight(roomId);
@@ -640,21 +644,7 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
-      const memoryEntries = await upsertMemoryEntries({
-        userId: socket.user.id,
-        text: textContent,
-        sourceType: 'room',
-        sourceRoomId: roomId,
-        sourceMessageId: msg._id,
-      });
-
-      if (memoryEntries.length > 0) {
-        msg.memoryRefs = memoryEntries.slice(0, 3).map((entry) => ({
-          id: entry._id.toString(),
-          summary: entry.summary,
-        }));
-        await msg.save();
-      }
+      // Memory extraction is only performed when @ai is triggered via room_ai_chat
 
       await maybeMarkMessageDelivered(msg, roomId);
       await refreshRoomInsight(roomId);

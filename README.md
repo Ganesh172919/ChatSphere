@@ -1,67 +1,62 @@
 # ChatSphere
 
-ChatSphere is a full-stack AI-native chat platform built with React, TypeScript, Vite, Express, MongoDB, Socket.IO, JWT auth, Google OAuth, and a multi-provider AI gateway.
+ChatSphere is a full-stack AI-native chat platform built with React, TypeScript, Vite, Express, MongoDB, Socket.IO, JWT auth, Google OAuth, and a multi-provider backend AI gateway.
 
-## Core Features
+## Current AI Snapshot
 
-- Solo AI chat with saved conversations and server-backed sync
-- Group rooms with real-time messaging, replies, reactions, pins, polls, presence, typing, file sharing, and `@ai` room assistance
-- AI Memory Graph with editable user memory
-- Conversation Intelligence for solo chats and rooms
-- Cross-model import and export for external AI histories
-- OpenRouter-first multi-model routing with optional Gemini, Grok, and Hugging Face fallbacks
-- Model selection in solo chat and group AI prompts, including file-assisted prompts
-- Admin analytics, moderation, blocking, and prompt management
+- Solo AI chat runs through `POST /api/chat` and persists conversation-level model, provider, token, and routing metadata.
+- Room AI runs through the `trigger_ai` Socket.IO event and persists room AI replies as normal `Message` documents.
+- The backend AI gateway supports OpenRouter, Gemini direct, xAI Grok direct, Groq direct, Together AI, and Hugging Face router paths when matching API keys are configured.
+- Model discovery is exposed through `GET /api/ai/models` with a client-facing `auto` option.
+- Persistent AI artifacts include memories, conversation insights, room insights, prompt templates, and import sessions.
+- Project context and uploaded files can enrich solo AI prompts.
 
 ## Stack
 
 - Frontend: React 18, TypeScript, Vite, Zustand, Framer Motion
 - Backend: Express, Mongoose, Socket.IO
 - Database: MongoDB
-- AI: OpenRouter-first routing plus optional direct Gemini, Grok, and Hugging Face providers
+- AI: Multi-provider routing in `backend/services/gemini.js`
 - Auth: JWT access/refresh tokens plus Google OAuth
 
 ## Local Setup
 
 ### Backend
 
-```bash
-cd backend
-npm install
-cp .env.example .env
-```
+Create `backend/.env` manually because the current repo does not include a checked-in `.env.example` file.
 
-Windows PowerShell:
-
-```powershell
-cd backend
-npm install
-Copy-Item .env.example .env
-```
-
-Minimum backend env:
+Minimum backend env for AI-enabled local work:
 
 ```env
 MONGO_URI=mongodb://localhost:27017/chatsphere
 JWT_ACCESS_SECRET=replace_me
 JWT_REFRESH_SECRET=replace_me
-OPENROUTER_API_KEY=replace_me
-OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini
 CLIENT_URL=http://localhost:5173
 PORT=3000
+
+OPENROUTER_API_KEY=replace_me
+OPENROUTER_DEFAULT_MODEL=openai/gpt-5.4-mini
+DEFAULT_AI_MODEL=openai/gpt-5.4-mini
+
+# Optional direct-provider keys
+GEMINI_API_KEY=
+GROK_API_KEY=
+GROQ_API_KEY=
+TOGETHER_API_KEY=
+HUGGINGFACE_API_KEY=
 ```
 
-Optional direct-provider fallbacks are documented in [backend/.env.example](backend/.env.example).
+Run:
 
-Start backend:
-
-```bash
+```powershell
+cd backend
+npm install
 npm run dev
 ```
 
 ### Frontend
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev
@@ -74,37 +69,38 @@ Open:
 
 ## Verification
 
-```bash
+```powershell
 cd frontend
 npm run build
-
-cd ../
-node --check backend/index.js
-node --check backend/routes/rooms.js
-node --check backend/routes/ai.js
 ```
 
-## New In This Version
+```powershell
+cd ../backend
+Get-ChildItem -Path . -Recurse -Filter *.js -File |
+  Where-Object { $_.FullName -notmatch '\node_modules\' -and $_.FullName -notmatch '\dist\' } |
+  ForEach-Object { node --check $_.FullName }
+```
 
-- Memory Center at `/memory`
-- Data Portability Center at `/export`
-- Solo conversation sync with server data
-- OpenRouter-first model routing with visible model pickers in chat inputs
-- File-aware solo AI prompts and stronger `@ai` handling in rooms
-- Improved room join flow for existing rooms
-- Room insight summaries and action extraction
-- Prompt template storage and admin prompt APIs
-- Admin-protected analytics routes
+## Backend AI Docs
 
-## Documentation
+- [Backend AI Overview](docs/backend-ai/01-backend-ai-overview.md)
+- [Runtime Entrypoints And Request Lifecycle](docs/backend-ai/02-runtime-entrypoints-and-request-lifecycle.md)
+- [REST AI API And Contracts](docs/backend-ai/03-rest-ai-api-and-contracts.md)
+- [Socket Room AI And Realtime Lifecycle](docs/backend-ai/04-socket-room-ai-and-realtime-lifecycle.md)
+- [Model Routing Provider Catalog And Fallbacks](docs/backend-ai/05-model-routing-provider-catalog-and-fallbacks.md)
+- [Memory Extraction Retrieval And Governance](docs/backend-ai/06-memory-extraction-retrieval-and-governance.md)
+- [Conversation Insights Summaries And Actions](docs/backend-ai/07-conversation-insights-summaries-and-actions.md)
+- [Persistence Models Import Export And Project Context](docs/backend-ai/08-persistence-models-import-export-and-project-context.md)
+- [Operations Security Admin And Troubleshooting](docs/backend-ai/09-operations-security-admin-and-troubleshooting.md)
+- [Frontend Backend AI Integration](docs/backend-ai/10-frontend-backend-ai-integration.md)
 
-- [PROJECT_AUDIT.md](PROJECT_AUDIT.md)
-- [INNOVATION_ROADMAP.md](INNOVATION_ROADMAP.md)
+## Existing Docs
+
 - [ARCHITECTURE.md](ARCHITECTURE.md)
-- [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
-- [METRICS.md](METRICS.md)
 - [CHANGELOG.md](CHANGELOG.md)
+- [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
 - [API Reference](docs/api-reference.md)
-- [WebSocket Events](docs/websocket-events.md)
+- [Architecture](docs/architecture.md)
+- [Features](docs/features.md)
 - [Setup Guide](docs/setup-guide.md)
-- [Security](docs/security.md)
+- [WebSocket Events](docs/websocket-events.md)

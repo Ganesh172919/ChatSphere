@@ -1,33 +1,17 @@
 # CHANGELOG
 
-## vNext
+## March 31, 2026 Documentation Refresh
+
+### Updated
+
+- Corrected the docs to describe the current multi-provider AI gateway instead of a Gemini-only backend.
+- Corrected the docs to describe `auto` model routing, persisted provider metadata, token usage fields, and fallback diagnostics.
+- Corrected the docs to describe room AI as a Socket.IO `trigger_ai` flow.
+- Corrected the docs to describe project-aware solo prompts, memory extraction, and structured conversation insights.
+- Corrected the setup docs to note that the repo currently does not include a checked-in `backend/.env.example` file.
+- Corrected the API and websocket docs to match the route and event names implemented in the backend.
 
 ### Added
 
-- AI Memory Graph with persistent memory storage, ranking, and editable UI.
-- Cross-model import preview/import flow for external AI conversation files.
-- Normalized, markdown, and adapter export formats.
-- Conversation intelligence for solo conversations and rooms.
-- Prompt-template persistence and admin prompt management APIs.
-- `backend/.env.example`.
-- OpenRouter-first model routing with optional Gemini, Grok, and Hugging Face fallbacks.
-- Visible AI model selection in solo chat and room `@ai` flows.
-- File-assisted solo AI prompts and attachment-aware room AI triggers.
-
-### Improved
-
-- Solo conversation sync with server-backed loading and deletion.
-- Room chat with polls rendered in the main experience.
-- Theme settings now apply to the actual UI.
-- Profile bio persistence through the auth store.
-- Admin navigation and analytics authorization.
-- Group AI with memory-aware replies and per-user quota checks.
-- Existing room join flow now opens richer room data reliably.
-- Room AI invocations now carry provider/model metadata through persistence and sockets.
-
-### Fixed
-
-- Room export now uses `id` consistently on the frontend.
-- Analytics endpoints are now admin-protected.
-- Group AI no longer bypasses AI usage throttling.
-- Room detail loading now selects the fields needed to render joined rooms correctly.
+- Added a new ten-file backend AI documentation bundle under `docs/backend-ai`.
+- Added backend-focused docs for runtime flow, REST contracts, socket room AI, provider routing, memory, insights, persistence, operations, and frontend integration.

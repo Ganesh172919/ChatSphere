@@ -8,50 +8,33 @@ flowchart LR
   UI --> WS["Socket.IO Server"]
   API --> DB["MongoDB via Mongoose"]
   WS --> DB
-  API --> AI["AI Gateway (OpenRouter / Gemini / Grok / Hugging Face)"]
+  API --> AI["Provider-Aware AI Gateway"]
   WS --> AI
 ```
 
-## Backend Structure
+## AI Architecture Summary
 
-- `backend/index.js`: Express runtime, route mounting, Socket.IO lifecycle.
-- `backend/routes/*`: REST endpoints for auth, chat, conversations, rooms, AI tools, memory, export, admin, analytics, settings, polls, uploads, and moderation.
-- `backend/services/gemini.js`: provider-aware AI gateway, model discovery, prompt assembly, and attachment-aware requests.
-- `backend/services/memory.js`: extraction, ranking, retrieval, and usage tracking.
-- `backend/services/conversationInsights.js`: summary, topics, decisions, and action items.
-- `backend/services/importExport.js`: import parsing, dedupe, bundle export.
-- `backend/services/promptCatalog.js`: prompt defaults and prompt-template persistence.
+- Solo AI uses `POST /api/chat` and persists enriched assistant metadata on `Conversation.messages`.
+- Room AI uses the `trigger_ai` Socket.IO event and persists enriched AI replies on `Message`.
+- Shared services provide model routing, memory retrieval, insight generation, prompt templates, and import/export support.
+- Admin users can override prompt templates without redeploying the backend.
 
-## Frontend Structure
+## Key Backend Modules
 
-- `frontend/src/App.tsx`: lazy-loaded route shell.
-- `frontend/src/pages/SoloChat.tsx`: synced solo chat + insight panel.
-- `frontend/src/pages/GroupChat.tsx`: room chat, polls, sentiment badges, room insight.
-- `frontend/src/pages/MemoryCenter.tsx`: memory management UI.
-- `frontend/src/pages/ExportChat.tsx`: export and import center.
-- `frontend/src/store/*`: auth, chat, and room state with Zustand.
+- `backend/index.js`
+- `backend/routes/chat.js`
+- `backend/routes/ai.js`
+- `backend/routes/conversations.js`
+- `backend/routes/rooms.js`
+- `backend/routes/memory.js`
+- `backend/routes/settings.js`
+- `backend/routes/admin.js`
+- `backend/services/gemini.js`
+- `backend/services/memory.js`
+- `backend/services/conversationInsights.js`
+- `backend/services/promptCatalog.js`
+- `backend/services/importExport.js`
 
-## Data Model Additions
+## Reference Bundle
 
-- `MemoryEntry`: stable user memory with scoring and source references.
-- `ConversationInsight`: structured conversation or room summary.
-- `ImportSession`: dedupe and traceability for imports.
-- `PromptTemplate`: versioned prompt overrides.
-
-## Message Lifecycle
-
-### Solo
-
-1. User sends `POST /api/chat`.
-2. Backend retrieves relevant memory and current insight.
-3. AI response is generated through the selected provider/model.
-4. Conversation is persisted.
-5. Memory and insight are refreshed.
-
-### Group
-
-1. User joins room over Socket.IO.
-2. User sends message or `trigger_ai`.
-3. Backend validates membership, flood limits, and AI quota.
-4. Message and AI response are persisted to MongoDB with provider/model metadata.
-5. Room insight is refreshed and emitted state is updated.
+See the ten-file backend AI bundle in `docs/backend-ai` for the detailed implementation map.
