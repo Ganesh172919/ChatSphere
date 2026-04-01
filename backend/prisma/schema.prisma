@@ -1,85 +1,414 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
 generator client {
-  provider = "prisma-client-js"
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  password  String
-  refreshToken String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  chats     ChatMember[]
-  messages  Message[]
+enum AuthProvider {
+  LOCAL
+  GOOGLE
 }
 
-model Chat {
-  id        String   @id @default(uuid())
-  type      ChatType
-  name      String?   // only for group chats
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  // Relations
-  members   ChatMember[]
-  messages  Message[]
+enum PresenceStatus {
+  ONLINE
+  AWAY
+  OFFLINE
 }
 
-model ChatMember {
-  id        String   @id @default(uuid())
-  userId    String
-  chatId    String
-  role      ChatRole @default(MEMBER)
-  joinedAt  DateTime @default(now())
-
-  // Relations
-  user      User @relation(fields: [userId], references: [id])
-  chat      Chat @relation(fields: [chatId], references: [id])
-
-  @@unique([userId, chatId])
+enum ThemeMode {
+  LIGHT
+  DARK
+  SYSTEM
 }
 
-model Message {
-  id        String        @id @default(uuid())
-  content   String
-  type      MessageType   @default(TEXT)
-
-  chatId    String
-  senderId  String
-
-  createdAt DateTime @default(now())
-
-  // Relations
-  chat      Chat @relation(fields: [chatId], references: [id])
-  sender    User @relation(fields: [senderId], references: [id])
-
-  @@index([chatId, createdAt])
+enum RoomVisibility {
+  PRIVATE
+  INTERNAL
+  PUBLIC
 }
 
-enum ChatType {
-  DIRECT
-  GROUP
-}
-
-enum ChatRole {
+enum RoomMemberRole {
+  OWNER
   ADMIN
   MEMBER
 }
 
 enum MessageType {
-  TEXT
+  USER
+  SYSTEM
   AI
-  FILE
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  DELETED
+}
+
+enum ReactionEmoji {
+  THUMBS_UP
+  FIRE
+  MIND_BLOWN
+  IDEA
+}
+
+enum UploadVisibility {
+  PRIVATE
+  ROOM
+}
+
+enum MemorySource {
+  CHAT
+  ROOM
+  USER_PROFILE
+  SYSTEM
+}
+
+enum PollStatus {
+  OPEN
+  CLOSED
+  EXPIRED
+}
+
+enum ReportTargetType {
+  USER
+  MESSAGE
+  ROOM
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  HATE_SPEECH
+  INAPPROPRIATE_CONTENT
+  IMPERSONATION
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  ACTION_TAKEN
+  DISMISSED
+}
+
+enum AIProviderType {
+  MOCK
+  OPENAI
+  OPENROUTER
+  CUSTOM
+}
+
+model User {
+  id                       String            @id @default(cuid())
+  email                    String            @unique
+  username                 String            @unique
+  passwordHash             String?
+  googleId                 String?           @unique
+  authProvider             AuthProvider      @default(LOCAL)
+  displayName              String?
+  avatarUrl                String?
+  bio                      String            @default("")
+  isAdmin                  Boolean           @default(false)
+  presenceStatus           PresenceStatus    @default(OFFLINE)
+  lastSeenAt               DateTime          @default(now())
+  themeMode                ThemeMode         @default(SYSTEM)
+  customTheme              String            @default("default")
+  accentColor              String            @default("#2563EB")
+  notificationSound        Boolean           @default(true)
+  notificationDesktop      Boolean           @default(true)
+  notificationMentions     Boolean           @default(true)
+  notificationReplies      Boolean           @default(true)
+  smartRepliesEnabled      Boolean           @default(true)
+  sentimentAnalysisEnabled Boolean           @default(false)
+  grammarCheckEnabled      Boolean           @default(false)
+  blocksInitiated          UserBlock[]       @relation("Blocker")
+  blocksReceived           UserBlock[]       @relation("Blocked")
+  refreshTokens            RefreshToken[]
+  roomMembers              RoomMember[]
+  messages                 Message[]         @relation("MessageAuthor")
+  pinnedMessages           Message[]         @relation("PinnedByUser")
+  messageReads             MessageRead[]
+  messageReactions         MessageReaction[]
+  conversations            Conversation[]
+  memoryEntries            MemoryEntry[]
+  ownedUploads             Upload[]          @relation("UploadOwner")
+  uploadedFiles            Upload[]          @relation("UploadUploader")
+  ownedRooms               Room[]            @relation("RoomCreator")
+  createdPolls             Poll[]            @relation("PollCreator")
+  pollVotes                PollVote[]
+  reportsFiled             Report[]          @relation("ReportReporter")
+  reportsReviewed          Report[]          @relation("ReportReviewer")
+  projects                 Project[]         @relation("ProjectOwner")
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+}
+
+model UserBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Room {
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  description   String?
+  visibility    RoomVisibility @default(PRIVATE)
+  tags          String[]
+  maxMembers    Int            @default(20)
+  creatorId     String
+  lastMessageAt DateTime?
+  archivedAt    DateTime?
+  creator       User           @relation("RoomCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  members       RoomMember[]
+  messages      Message[]
+  uploads       Upload[]
+  polls         Poll[]
+  reports       Report[]
+  conversations Conversation[] @relation("RoomConversation")
+  projects      Project[]
+  memoryEntries MemoryEntry[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([creatorId])
+  @@index([lastMessageAt])
+}
+
+model RoomMember {
+  id         String         @id @default(cuid())
+  roomId     String
+  userId     String
+  role       RoomMemberRole @default(MEMBER)
+  joinedAt   DateTime       @default(now())
+  mutedUntil DateTime?
+  room       Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
+}
+
+model Upload {
+  id           String           @id @default(cuid())
+  ownerId      String
+  roomId       String?
+  storageKey   String           @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  visibility   UploadVisibility @default(PRIVATE)
+  uploadedById String
+  createdAt    DateTime         @default(now())
+  owner        User             @relation("UploadOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  uploader     User             @relation("UploadUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  room         Room?            @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  messages     Message[]
+
+  @@index([ownerId])
+  @@index([roomId])
+}
+
+model Message {
+  id                String         @id @default(cuid())
+  roomId            String
+  authorId          String?
+  authorName        String
+  parentMessageId   String?
+  uploadId          String?
+  content           String
+  messageType       MessageType    @default(USER)
+  status            MessageStatus  @default(SENT)
+  isPinned          Boolean        @default(false)
+  pinnedAt          DateTime?
+  pinnedById        String?
+  editedAt          DateTime?
+  deletedAt         DateTime?
+  aiProvider        AIProviderType?
+  aiModel           String?
+  triggeredByUserId String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  room              Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  author            User?          @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  parentMessage     Message?       @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies           Message[]      @relation("MessageReplies")
+  upload            Upload?        @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  pinnedBy          User?          @relation("PinnedByUser", fields: [pinnedById], references: [id], onDelete: SetNull)
+  readReceipts      MessageRead[]
+  reactions         MessageReaction[]
+
+  @@index([roomId, createdAt])
+  @@index([authorId])
+  @@index([parentMessageId])
+}
+
+model MessageRead {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId, readAt])
+}
+
+model MessageReaction {
+  id        String        @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     ReactionEmoji
+  createdAt DateTime      @default(now())
+  message   Message       @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([userId])
+}
+
+model Conversation {
+  id         String   @id @default(cuid())
+  userId     String
+  roomId     String?
+  title      String
+  entries    Json
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room       Room?    @relation("RoomConversation", fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([userId, updatedAt])
+  @@index([roomId])
+}
+
+model Project {
+  id            String        @id @default(cuid())
+  ownerId       String
+  roomId        String?
+  name          String
+  description   String?
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  owner         User          @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  room          Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  memoryEntries MemoryEntry[]
+
+  @@index([ownerId])
+  @@index([roomId])
+}
+
+model MemoryEntry {
+  id         String       @id @default(cuid())
+  userId     String
+  projectId  String?
+  roomId     String?
+  summary    String
+  content    String
+  keywords   String[]
+  score      Float        @default(0.5)
+  source     MemorySource @default(CHAT)
+  lastUsedAt DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room       Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  project    Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, score])
+  @@index([roomId])
+}
+
+model Poll {
+  id                 String      @id @default(cuid())
+  roomId             String
+  creatorId          String
+  question           String
+  allowMultipleVotes Boolean     @default(false)
+  isAnonymous        Boolean     @default(false)
+  expiresAt          DateTime?
+  status             PollStatus  @default(OPEN)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  room               Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  creator            User        @relation("PollCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  options            PollOption[]
+  votes              PollVote[]
+
+  @@index([roomId, createdAt])
+}
+
+model PollOption {
+  id       String     @id @default(cuid())
+  pollId   String
+  text     String
+  position Int
+  poll     Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes    PollVote[]
+
+  @@unique([pollId, position])
+}
+
+model PollVote {
+  id        String     @id @default(cuid())
+  optionId  String
+  pollId    String
+  userId    String
+  createdAt DateTime   @default(now())
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([optionId, userId])
+  @@index([pollId, userId])
+}
+
+model Report {
+  id           String           @id @default(cuid())
+  reporterId   String
+  roomId       String?
+  targetType   ReportTargetType
+  targetId     String
+  reason       ReportReason
+  description  String           @default("")
+  status       ReportStatus     @default(PENDING)
+  reviewedById String?
+  reviewNote   String           @default("")
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  reporter     User             @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  room         Room?            @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  reviewedBy   User?            @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([reporterId])
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
 }

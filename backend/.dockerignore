@@ -1,0 +1,21 @@
+# Docker
+node_modules
+npm-debug.log
+dist
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+*.md
+*.log
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts
+__tests__
+frontend

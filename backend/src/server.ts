@@ -1,47 +1,39 @@
-import express from "express";
-import dotenv from "dotenv";
-import cors from "cors";
-import { PrismaClient } from "@prisma/client";
-import authRoutes from "./routes/auth.routes";
-import groupRoutes from "./routes/group.routes";
-import messageRoutes from "./routes/message.routes";
+import "dotenv/config";
+import "./types/express";
+import http from "node:http";
+import { createApp } from "./app";
+import { env } from "./config/env";
+import { logger } from "./config/logger";
+import { prisma } from "./config/prisma";
+import { fileStorageService } from "./services/files/file-storage.service";
+import { createSocketServer } from "./socket";
 
-dotenv.config();
+const bootstrap = async () => {
+  await prisma.$connect();
+  await fileStorageService.ensureUploadDirectory();
 
-const app = express();
-const prisma = new PrismaClient();
+  const app = createApp();
+  const server = http.createServer(app);
+  createSocketServer(server);
 
-const PORT = process.env.PORT || 5000;
+  server.listen(env.PORT, () => {
+    logger.info({ port: env.PORT }, "ChatSphere rebuild server started");
+  });
 
-app.use(cors());
-app.use(express.json());
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, "Shutting down server");
+    server.close(async () => {
+      await prisma.$disconnect();
+      process.exit(0);
+    });
+  };
 
-// routes
-app.use("/api/auth", authRoutes);
-app.use("/api/groups", groupRoutes);
-app.use("/api/chats", messageRoutes);
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+};
 
-app.get("/", (req, res) => {
-    res.send("API Running");
-});
-
-// db test route
-app.get("/test-db", async (req, res) => {
-    try {
-        const users = await prisma.user.findMany();
-        res.json(users);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "DB error" });
-    }
-});
-
-app.listen(PORT, async () => {
-    try {
-        await prisma.$connect();
-        console.log(" Database connected");
-        console.log(` Server running on port ${PORT}`);
-    } catch (error) {
-        console.error(" DB connection failed:", error);
-    }
+void bootstrap().catch(async (error) => {
+  logger.error({ err: error }, "Failed to bootstrap application");
+  await prisma.$disconnect();
+  process.exit(1);
 });
