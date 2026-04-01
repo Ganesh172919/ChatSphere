@@ -1,0 +1,400 @@
+# Model Routing Provider Catalog And Fallbacks
+
+- This file documents the provider-aware gateway implemented in backend/services/gemini.js.
+- The filename is historical; the implementation is now a multi-provider routing layer with task-aware ranking and fallback execution.
+- Use this file whenever you need to add a provider, change model ranking, or understand why the selected model differs from the requested model.
+
+### `backend/services/gemini.js`
+
+- Responsibility: Gateway for model discovery, prompt assembly, provider execution, and structured fallback handling.
+- Defines baked-in model defaults for OpenRouter, Gemini direct, Together AI, and Groq direct.
+- Supports direct single-model fallbacks for Hugging Face router and xAI Grok direct when those keys exist.
+- Maintains an in-memory runtimeModelCatalog cache with a TTL controlled by MODEL_CATALOG_TTL_MS.
+- Refreshes provider catalogs lazily on demand and eagerly at startup when provider keys exist.
+- Adds provider labels and supportsFiles metadata to catalog entries before returning them to callers.
+- Resolves an explicit requested model if available, otherwise falls back to MODEL_NAME or the first visible model.
+- Supports client-facing auto routing by ranking available models according to operation type, prompt complexity, and attachment presence.
+- Retries across multiple ranked models when an error is classified as retryable.
+- Normalizes retryable provider failures into structured errors with status code, retry hint, and provider metadata.
+
+## Supported Provider Families
+
+- OpenRouter models are fetched from https://openrouter.ai/api/v1/models when OPENROUTER_API_KEY exists.
+- Gemini direct models are fetched from https://generativelanguage.googleapis.com/v1beta/models when GEMINI_API_KEY exists.
+- Together AI models are fetched from https://api.together.xyz/v1/models when TOGETHER_API_KEY exists.
+- Groq direct models are fetched from https://api.groq.com/openai/v1/models when GROQ_API_KEY exists.
+- xAI Grok direct models are fetched from https://api.x.ai/v1/models when GROK_API_KEY or XAI_API_KEY exists.
+- Hugging Face router uses a configured model id from HUGGINGFACE_MODEL or a baked-in default when HUGGINGFACE_API_KEY exists.
+
+## Environment Variables That Matter
+
+- DEFAULT_AI_MODEL can set the default model across providers.
+- OPENROUTER_DEFAULT_MODEL influences the default when DEFAULT_AI_MODEL is absent.
+- OPENROUTER_API_KEY enables OpenRouter catalog loading and requests.
+- OPENROUTER_MODELS can override the visible OpenRouter model list with a comma-separated configuration string.
+- GEMINI_API_KEY enables Gemini direct catalog loading and requests.
+- GEMINI_MODEL and GEMINI_MODELS influence Gemini direct defaults and visible models.
+- GROK_API_KEY or XAI_API_KEY enables xAI direct requests.
+- GROQ_API_KEY enables Groq direct catalog loading and requests.
+- TOGETHER_API_KEY enables Together AI catalog loading and requests.
+- HUGGINGFACE_API_KEY enables Hugging Face router requests.
+- HUGGINGFACE_MODEL overrides the default Hugging Face model id.
+- MODEL_CATALOG_TTL_MS controls how long remote catalog results are cached.
+- AI_FALLBACK_MODEL_LIMIT controls how many ranked models can be tried on a request.
+- AI_JSON_MAX_COMPLETION_TOKENS, AI_CHAT_MAX_COMPLETION_TOKENS, and AI_MAX_COMPLETION_TOKENS influence max output size.
+
+## Model Discovery And Visibility Rules
+
+- Only providers with configured keys contribute visible models.
+- OpenRouter catalog entries are filtered to text-capable output modalities.
+- Together AI catalog entries are filtered to chat-capable models and exclude obvious speech, image, and video endpoints.
+- Groq catalog entries exclude whisper, guard, and unsupported safety-only models.
+- Gemini direct catalog entries exclude embeddings, image generation, audio, deep-research, robotics, and live-oriented models.
+- When no providers are configured and fallback inclusion is allowed, the backend exposes a synthetic fallback/offline model.
+- The UI-facing GET /api/ai/models route hides the synthetic fallback and adds a synthetic auto model instead.
+
+## Auto Routing Rules
+
+- Prompt complexity is high when there is an attachment, when the operation is group-chat, or when prompt length exceeds 2800 characters.
+- Prompt complexity is medium when the operation is json or prompt length exceeds 1200 characters.
+- Prompt complexity is low otherwise.
+- For JSON work, the ranking prefers fast structured models first at low and medium complexity, and stronger reasoning models at high complexity.
+- For chat work, the ranking prefers chat-capable fast models first at low complexity and larger reasoning models at high complexity.
+- Attachment presence biases the ranking toward Gemini and GPT-class models that are more likely to support file or image interpretation.
+- If the request explicitly names a model and the id is not auto, the backend disables auto routing and resolves that model directly.
+- If the request uses auto or omits modelId, the backend records autoMode true and the estimated complexity in routing metadata.
+
+## Fallback Execution Rules
+
+- The gateway builds an attempt chain from the selected model plus the remaining ranked models.
+- The gateway logs AI_ATTEMPT before each provider call with operation, attempt number, model id, provider, prompt length, attachment presence, and complexity.
+- If a call succeeds, the gateway logs AI_SUCCESS and returns content, usage, processing time, and routing metadata.
+- If a call fails, the gateway normalizes the error and determines whether retry is safe.
+- Retryable failures include quota-style provider responses, model-unavailable conditions, provider credit issues, network errors, and 5xx responses.
+- Non-retryable failures are rethrown immediately.
+- When all attempts fail, the last normalized error bubbles back to the route or socket layer.
+- When no provider-backed models exist at all, the gateway returns an offline fallback response rather than throwing.
+
+## Attachment Handling In The Gateway
+
+- The gateway resolves the uploaded file path from attachment.fileUrl and uploadDir.
+- Plain text, markdown, CSV, JSON, and XML attachments can be read directly into promptText.
+- Images under 3 MB can be converted into base64 data URLs and attached to OpenAI-like or Gemini payloads.
+- PDFs currently add only metadata text because extraction is not enabled.
+- Project files reuse the same attachment payload builder so project context and direct chat attachments stay consistent.
+
+- Gateway note 001: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 002: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 003: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 004: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 005: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 006: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 007: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 008: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 009: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 010: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 011: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 012: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 013: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 014: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 015: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 016: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 017: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 018: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 019: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 020: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 021: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 022: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 023: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 024: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 025: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 026: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 027: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 028: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 029: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 030: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 031: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 032: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 033: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 034: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 035: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 036: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 037: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 038: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 039: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 040: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 041: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 042: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 043: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 044: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 045: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 046: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 047: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 048: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 049: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 050: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 051: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 052: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 053: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 054: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 055: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 056: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 057: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 058: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 059: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 060: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 061: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 062: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 063: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 064: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 065: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 066: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 067: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 068: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 069: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 070: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 071: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 072: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 073: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 074: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 075: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 076: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 077: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 078: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 079: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 080: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 081: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 082: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 083: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 084: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 085: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 086: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 087: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 088: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 089: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 090: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 091: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 092: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 093: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 094: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 095: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 096: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 097: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 098: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 099: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 100: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 101: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 102: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 103: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 104: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 105: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 106: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 107: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 108: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 109: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 110: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 111: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 112: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 113: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 114: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 115: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 116: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 117: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 118: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 119: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 120: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 121: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 122: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 123: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 124: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 125: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 126: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 127: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 128: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 129: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 130: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 131: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 132: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 133: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 134: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 135: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 136: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 137: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 138: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 139: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 140: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 141: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 142: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 143: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 144: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 145: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 146: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 147: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 148: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 149: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 150: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 151: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 152: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 153: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 154: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 155: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 156: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 157: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 158: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 159: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 160: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 161: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 162: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 163: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 164: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 165: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 166: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 167: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 168: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 169: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 170: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 171: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 172: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 173: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 174: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 175: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 176: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 177: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 178: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 179: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 180: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 181: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 182: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 183: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 184: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 185: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 186: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 187: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 188: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 189: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 190: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 191: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 192: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 193: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 194: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 195: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 196: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 197: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 198: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 199: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 200: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 201: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 202: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 203: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 204: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 205: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 206: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 207: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 208: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 209: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 210: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 211: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 212: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 213: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 214: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 215: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 216: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 217: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 218: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 219: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 220: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 221: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 222: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 223: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 224: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 225: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 226: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 227: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 228: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 229: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 230: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 231: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 232: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 233: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 234: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 235: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 236: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 237: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 238: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 239: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 240: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 241: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 242: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 243: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 244: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 245: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 246: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 247: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 248: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 249: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 250: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 251: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 252: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 253: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 254: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 255: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 256: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 257: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 258: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 259: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 260: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 261: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 262: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 263: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 264: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 265: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 266: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 267: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 268: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 269: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 270: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 271: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 272: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 273: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 274: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 275: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 276: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 277: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 278: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 279: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 280: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 281: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 282: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 283: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 284: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 285: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 286: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 287: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 288: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 289: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 290: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 291: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 292: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 293: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 294: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 295: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 296: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 297: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 298: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 299: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 300: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 301: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 302: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 303: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 304: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 305: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 306: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 307: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 308: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
+- Gateway note 309: the requested model is a preference, but the persisted selected model is the source of truth for what actually ran.
+- Gateway note 310: remote catalog refresh affects only model visibility, not the core request payload contract sent by the frontend.
+- Gateway note 311: supportsFiles is a capability hint for the UI and prompt builder, not a complete guarantee of identical provider behavior.
+- Gateway note 312: task-aware ranking is heuristic and should be treated as a policy layer that can evolve without changing the external API.
+- Gateway note 313: if you add a provider, update discovery, visibility filters, request execution, usage extraction, and labels together.
+- Gateway note 314: offline fallback exists so the application can return something intelligible even with zero configured providers.
+- Gateway note 315: route and socket handlers rely on normalized gateway errors to decide whether to send 429, 503, or a generic failure.
