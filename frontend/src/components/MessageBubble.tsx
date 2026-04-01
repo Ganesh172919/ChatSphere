@@ -1,0 +1,491 @@
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import {
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Flame,
+  Lightbulb,
+  PenSquare,
+  Pin,
+  Reply,
+  ThumbsUp,
+  Trash2,
+  Brain,
+} from 'lucide-react';
+import MarkdownRenderer from './MarkdownRenderer';
+import ReadReceipt from './ReadReceipt';
+import SentimentBadge from './SentimentBadge';
+import type { MemoryReference } from '../types/chat';
+
+interface Reaction {
+  emoji: string;
+  count: number;
+  hasReacted: boolean;
+}
+
+interface Props {
+  id?: string;
+  role: 'user' | 'assistant' | 'group-user' | 'ai';
+  content: string;
+  timestamp: string;
+  username?: string;
+  userId?: string;
+  currentUserId?: string;
+  isAI?: boolean;
+  triggeredBy?: string;
+  reactions?: Record<string, string[]>;
+  replyTo?: { id: string; username: string; content: string } | null;
+  onReply?: () => void;
+  onReaction?: (emoji: string) => void;
+  onPin?: (messageId: string) => void;
+  onEdit?: (nextContent: string) => void;
+  onDelete?: () => void;
+  showReactions?: boolean;
+  status?: 'sent' | 'delivered' | 'read';
+  isPinned?: boolean;
+  isEdited?: boolean;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileType?: string | null;
+  fileSize?: number | null;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  index?: number;
+  memoryRefs?: MemoryReference[];
+  sentiment?: { sentiment: string; emoji: string; confidence: number } | null;
+  modelId?: string | null;
+  provider?: string | null;
+  requestedModelId?: string | null;
+  processingMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  autoMode?: boolean;
+  autoComplexity?: string | null;
+  fallbackUsed?: boolean;
+  messageState?: 'pending' | 'complete' | 'error';
+}
+
+const REACTION_EMOJIS = [
+  { emoji: '👍', icon: ThumbsUp },
+  { emoji: '🔥', icon: Flame },
+  { emoji: '🤯', icon: Brain },
+  { emoji: '💡', icon: Lightbulb },
+];
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+function getInitials(name: string): string {
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getAvatarColor(userId: string): string {
+  const colors = [
+    'from-pink-500 to-rose-500',
+    'from-violet-500 to-purple-500',
+    'from-blue-500 to-cyan-500',
+    'from-emerald-500 to-teal-500',
+    'from-amber-500 to-orange-500',
+    'from-red-500 to-pink-500',
+  ];
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function formatFileSize(bytes: number | null | undefined) {
+  if (!bytes) {
+    return '';
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export default function MessageBubble({
+  id,
+  role,
+  content,
+  timestamp,
+  username,
+  userId,
+  currentUserId,
+  isAI,
+  triggeredBy,
+  reactions,
+  replyTo,
+  onReply,
+  onReaction,
+  onPin,
+  onEdit,
+  onDelete,
+  showReactions = false,
+  status,
+  isPinned = false,
+  isEdited = false,
+  fileUrl,
+  fileName,
+  fileType,
+  fileSize,
+  canEdit = false,
+  canDelete = false,
+  index = 0,
+  memoryRefs = [],
+  sentiment = null,
+  modelId = null,
+  provider = null,
+  requestedModelId = null,
+  processingMs = null,
+  promptTokens = null,
+  completionTokens = null,
+  totalTokens = null,
+  autoMode = false,
+  autoComplexity = null,
+  fallbackUsed = false,
+  messageState = 'complete',
+}: Props) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+
+  const isUser = role === 'user' || (role === 'group-user' && userId === currentUserId);
+  const isAssistant = role === 'assistant' || isAI;
+  const words = wordCount(content);
+  const isLong = words > 400;
+  const displayContent = isLong && !isExpanded ? `${content.slice(0, 1500)}...` : content;
+  const isImage = Boolean(fileUrl && fileType?.startsWith('image/'));
+  const aiMetaLabel = [modelId, provider].filter(Boolean).join(' · ');
+
+  const tokenLabel = totalTokens ? `${totalTokens} tok` : null;
+  const tokenBreakdownLabel = promptTokens || completionTokens
+    ? `${promptTokens ?? 0}/${completionTokens ?? 0} in-out`
+    : null;
+  const timingLabel = processingMs ? `${(processingMs / 1000).toFixed(processingMs >= 10000 ? 0 : 1)}s` : null;
+  const routeLabel = autoMode ? `Auto${autoComplexity ? ` (${autoComplexity})` : ''}` : requestedModelId ? 'Manual' : null;
+
+  const formatTime = (ts: string) => {
+    return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const reactionData: Reaction[] = reactions
+    ? REACTION_EMOJIS.map(({ emoji }) => ({
+        emoji,
+        count: reactions[emoji]?.length || 0,
+        hasReacted: reactions[emoji]?.includes(currentUserId || '') || false,
+      }))
+    : [];
+
+  useEffect(() => {
+    setDraft(content);
+  }, [content]);
+
+  const handleSaveEdit = () => {
+    const nextContent = draft.trim();
+    if (!nextContent || nextContent === content) {
+      setIsEditing(false);
+      setDraft(content);
+      return;
+    }
+
+    onEdit?.(nextContent);
+    setIsEditing(false);
+  };
+
+  const renderAttachment = () => {
+    if (!fileUrl) {
+      return null;
+    }
+
+    return (
+      <div className="mt-3 space-y-2">
+        {isImage && (
+          <a href={fileUrl} target="_blank" rel="noreferrer" className="block">
+            <img
+              src={fileUrl}
+              alt={fileName || 'Shared image'}
+              className="max-h-72 w-full rounded-xl border border-navy-600/40 object-cover"
+            />
+          </a>
+        )}
+
+        <a
+          href={fileUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center justify-between gap-3 rounded-xl border border-navy-600/40 bg-navy-900/40 px-3 py-2 text-xs text-gray-300 hover:border-neon-purple/40 hover:text-white transition-colors"
+        >
+          <div className="min-w-0">
+            <p className="truncate font-medium">{fileName || 'Attachment'}</p>
+            <p className="truncate text-gray-500">
+              {fileType || 'Unknown type'}
+              {fileSize ? ` · ${formatFileSize(fileSize)}` : ''}
+            </p>
+          </div>
+          <Download size={14} className="flex-shrink-0" />
+        </a>
+      </div>
+    );
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 15, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay: index * 0.05, duration: 0.3 }}
+      className={`flex gap-3 px-4 py-2 group ${isUser && !showReactions ? 'flex-row-reverse' : 'flex-row'}`}
+      role="article"
+      aria-label={`Message from ${username || role}${aiMetaLabel ? ` using ${aiMetaLabel}` : ''}`}
+    >
+      {!isUser || showReactions ? (
+        <div
+          className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 ${
+            isAssistant
+              ? 'bg-gradient-to-br from-neon-purple to-neon-blue animate-pulse-glow'
+              : `bg-gradient-to-br ${getAvatarColor(userId || 'user')}`
+          }`}
+          aria-hidden="true"
+        >
+          {isAssistant ? 'AI' : getInitials(username || 'U')}
+        </div>
+      ) : null}
+
+      <div className={`max-w-[75%] min-w-0 ${isUser && !showReactions ? 'items-end' : ''}`}>
+        {replyTo && (
+          <div className="text-xs text-gray-500 mb-1 pl-3 border-l-2 border-navy-500 truncate" role="note">
+            ↩ <span className="font-medium text-gray-400">{replyTo.username}</span>: {replyTo.content}
+          </div>
+        )}
+
+        {showReactions && !isAssistant && (
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+            <span className="text-xs font-semibold text-gray-300">{username}</span>
+            <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
+            {isPinned && (
+              <span className="flex items-center gap-0.5 text-[10px] text-neon-purple">
+                <Pin size={10} /> Pinned
+              </span>
+            )}
+            {sentiment ? <SentimentBadge sentiment={sentiment.sentiment} emoji={sentiment.emoji} confidence={sentiment.confidence} /> : null}
+            {isEdited && (
+              <span className="text-[10px] text-gray-500">Edited</span>
+            )}
+          </div>
+        )}
+
+        {isAssistant && (
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+            <span className="text-xs font-semibold bg-gradient-to-r from-neon-purple to-neon-blue bg-clip-text text-transparent">
+              AI Assistant
+            </span>
+            {triggeredBy && (
+              <span className="text-[10px] text-gray-600">triggered by {triggeredBy}</span>
+            )}
+            <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
+            {routeLabel ? <span className="text-[10px] text-gray-600">{routeLabel}</span> : null}
+            {timingLabel ? <span className="text-[10px] text-gray-600">{timingLabel}</span> : null}
+            {tokenLabel ? <span className="text-[10px] text-gray-600">{tokenLabel}</span> : null}
+            {tokenBreakdownLabel ? <span className="text-[10px] text-gray-600">{tokenBreakdownLabel}</span> : null}
+            {fallbackUsed ? <span className="text-[10px] text-amber-300">fallback</span> : null}
+          </div>
+        )}
+
+        <div
+          className={`rounded-2xl px-4 py-3 ${
+            isAssistant
+              ? 'bg-navy-700/60 border-l-2 border-neon-purple/60'
+              : isUser && !showReactions
+                ? 'bg-gradient-to-br from-neon-purple/20 to-neon-blue/20 border border-neon-purple/20'
+                : isAssistant
+                  ? 'bg-navy-700/40 border border-navy-600/30'
+                  : 'bg-navy-700/30 border border-navy-700/40'
+          }`}
+        >
+          {isEditing ? (
+            <div className="space-y-3">
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                className="w-full min-h-24 rounded-xl border border-neon-purple/30 bg-navy-900/60 px-3 py-2 text-sm text-white focus:outline-none"
+              />
+              <div className="flex justify-end gap-2 text-xs">
+                <button
+                  onClick={() => {
+                    setDraft(content);
+                    setIsEditing(false);
+                  }}
+                  className="rounded-lg px-3 py-1.5 text-gray-400 hover:text-white hover:bg-navy-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  className="rounded-lg bg-neon-purple/20 px-3 py-1.5 text-neon-purple hover:bg-neon-purple/30 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {messageState === 'pending' && isAssistant ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-gray-300">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-neon-purple animate-pulse" />
+                    <span>Thinking...</span>
+                  </div>
+                  <div className="h-3 w-3/4 rounded-full bg-navy-600/60 animate-pulse" />
+                  <div className="h-3 w-1/2 rounded-full bg-navy-600/40 animate-pulse" />
+                </div>
+              ) : isAssistant ? (
+                <MarkdownRenderer content={displayContent} />
+              ) : (
+                <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">{content}</p>
+              )}
+
+              {renderAttachment()}
+            </>
+          )}
+
+          {isLong && !isEditing && (
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="flex items-center gap-1 mt-2 text-xs text-neon-purple hover:text-purple-300 transition-colors"
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {isExpanded ? 'Show less' : 'Show full response'}
+            </button>
+          )}
+
+          {memoryRefs.length > 0 && (
+            <div className="mt-3 rounded-xl border border-neon-blue/20 bg-neon-blue/5 p-3">
+              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-neon-blue">
+                Memory used
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {memoryRefs.map((memory) => (
+                  <span
+                    key={memory.id}
+                    className="rounded-full border border-neon-blue/20 bg-navy-900/40 px-2.5 py-1 text-[11px] text-gray-200"
+                  >
+                    {memory.summary}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 mt-1 px-1 flex-wrap">
+          {isAssistant && (
+            <>
+              <span className="text-[10px] text-gray-600">{words} words</span>
+              {modelId ? <span className="text-[10px] text-gray-600">{modelId}</span> : null}
+              {timingLabel ? <span className="text-[10px] text-gray-600">{timingLabel}</span> : null}
+              {tokenLabel ? <span className="text-[10px] text-gray-600">{tokenLabel}</span> : null}
+              {tokenBreakdownLabel ? <span className="text-[10px] text-gray-600">{tokenBreakdownLabel}</span> : null}
+              {fallbackUsed ? <span className="text-[10px] text-amber-300">fallback</span> : null}
+            </>
+          )}
+          {!showReactions && !isAssistant && (
+            <>
+              <span className="text-[10px] text-gray-600">{formatTime(timestamp)}</span>
+              {isEdited && <span className="text-[10px] text-gray-500">Edited</span>}
+            </>
+          )}
+          {isUser && status && (
+            <ReadReceipt status={status} />
+          )}
+        </div>
+
+        {showReactions && (
+          <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+            {reactionData.filter((reaction) => reaction.count > 0).map(({ emoji, count, hasReacted }) => (
+              <button
+                key={emoji}
+                onClick={() => onReaction?.(emoji)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-all ${
+                  hasReacted
+                    ? 'border-neon-purple/40 bg-neon-purple/10 text-white'
+                    : 'border-navy-600/50 bg-navy-700/30 text-gray-400 hover:border-navy-500'
+                }`}
+                aria-label={`${emoji} reaction, ${count} ${count === 1 ? 'person' : 'people'}`}
+              >
+                <span>{emoji}</span>
+                <span>{count}</span>
+              </button>
+            ))}
+
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {REACTION_EMOJIS.map(({ emoji }) => (
+                <button
+                  key={emoji}
+                  onClick={() => onReaction?.(emoji)}
+                  className="w-6 h-6 flex items-center justify-center rounded hover:bg-navy-600 text-sm transition-colors"
+                  title={emoji}
+                  aria-label={`Add ${emoji} reaction`}
+                >
+                  {emoji}
+                </button>
+              ))}
+              {onReply && (
+                <button
+                  onClick={onReply}
+                  className="p-1 rounded hover:bg-navy-600 text-gray-500 hover:text-gray-300 transition-colors"
+                  title="Reply"
+                  aria-label="Reply to message"
+                >
+                  <Reply size={14} />
+                </button>
+              )}
+              {onPin && id && (
+                <button
+                  onClick={() => onPin(id)}
+                  className={`p-1 rounded hover:bg-navy-600 transition-colors ${
+                    isPinned ? 'text-neon-purple' : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                  title={isPinned ? 'Unpin message' : 'Pin message'}
+                  aria-label={isPinned ? 'Unpin message' : 'Pin message'}
+                >
+                  <Pin size={14} />
+                </button>
+              )}
+              {canEdit && !isAssistant && !isEditing && (
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="p-1 rounded hover:bg-navy-600 text-gray-500 hover:text-gray-300 transition-colors"
+                  title="Edit message"
+                  aria-label="Edit message"
+                >
+                  <PenSquare size={14} />
+                </button>
+              )}
+              {canDelete && !isAssistant && (
+                <button
+                  onClick={onDelete}
+                  className="p-1 rounded hover:bg-navy-600 text-gray-500 hover:text-red-300 transition-colors"
+                  title="Delete message"
+                  aria-label="Delete message"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
