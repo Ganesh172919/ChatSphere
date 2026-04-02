@@ -17,7 +17,6 @@ export interface AuthUser {
 interface AuthResponse {
   user: AuthUser;
   accessToken: string;
-  refreshToken: string;
 }
 
 export async function registerUser(username: string, email: string, password: string): Promise<AuthResponse> {
@@ -30,13 +29,13 @@ export async function loginUser(email: string, password: string): Promise<AuthRe
   return data;
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
-  const { data } = await api.post('/auth/refresh', { refreshToken });
+export async function refreshAccessToken(): Promise<{ accessToken: string }> {
+  const { data } = await api.post('/auth/refresh');
   return data;
 }
 
-export async function logoutUser(refreshToken: string): Promise<void> {
-  await api.post('/auth/logout', { refreshToken });
+export async function logoutUser(): Promise<void> {
+  await api.post('/auth/logout');
 }
 
 export async function getMe(): Promise<AuthUser> {

@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore';
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 });
 
 // Flag to prevent multiple simultaneous refresh attempts
@@ -64,16 +65,11 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = localStorage.getItem('refreshToken');
-        if (!refreshToken) {
-          throw new Error('No refresh token');
-        }
+        // Cookie-based refresh — no body needed
+        const { data } = await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        const { accessToken } = data;
 
-        const { data } = await axios.post('/api/auth/refresh', { refreshToken });
-        const { accessToken, refreshToken: newRefreshToken } = data;
-
-        // Update both local storage and the Zustand store so components like useSocket get the new token
-        useAuthStore.getState().updateTokens(accessToken, newRefreshToken);
+        useAuthStore.getState().updateTokens(accessToken);
 
         api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;

@@ -61,7 +61,7 @@ export default function Register() {
     setIsLoading(true);
     try {
       const data = await registerUser(username.trim(), email.trim(), password);
-      login(data.user, data.accessToken, data.refreshToken);
+      login(data.user, data.accessToken);
       toast.success(`Welcome, ${data.user.username}! 🎉`);
       navigate('/dashboard');
     } catch (err: unknown) {

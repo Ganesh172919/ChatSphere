@@ -65,7 +65,9 @@ app.use(cors({
   credentials: true,
 }));
 
+const cookieParser = require('cookie-parser');
 app.use(express.json({ limit: '5mb' }));
+app.use(cookieParser());
 app.use(passport.initialize());
 
 app.use((req, res, next) => {

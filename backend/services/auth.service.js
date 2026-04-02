@@ -108,8 +108,8 @@ async function registerUser({ username, email, password }) {
     data: {
       user: user.toSafeObject(),
       accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
     },
+    refreshToken: tokens.refreshToken,
   };
 }
 
@@ -142,8 +142,8 @@ async function loginUser({ email, password }) {
     data: {
       user: user.toSafeObject(),
       accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
     },
+    refreshToken: tokens.refreshToken,
   };
 }
 
@@ -179,8 +179,8 @@ async function refreshTokens({ refreshToken }) {
     status: 200,
     data: {
       accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
     },
+    refreshToken: tokens.refreshToken,
   };
 }
 
@@ -283,8 +283,8 @@ async function exchangeGoogleCode({ code }) {
     data: {
       user: user.toSafeObject(),
       accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
     },
+    refreshToken: tokens.refreshToken,
   };
 }
 

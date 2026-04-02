@@ -44,7 +44,7 @@ export default function Login() {
     setIsLoading(true);
     try {
       const data = await loginUser(email.trim(), password);
-      login(data.user, data.accessToken, data.refreshToken);
+      login(data.user, data.accessToken);
       toast.success(`Welcome back, ${data.user.username}!`);
       navigate('/dashboard');
     } catch (err: unknown) {

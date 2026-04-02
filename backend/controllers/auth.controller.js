@@ -1,6 +1,29 @@
 const passport = require('passport');
 const authService = require('../services/auth.service');
 
+// ─── Cookie config ────────────────────────────────────────────────────────────
+const REFRESH_TOKEN_COOKIE = 'refreshToken';
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production',
+  path: '/api/auth',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
+function setRefreshCookie(res, token) {
+  res.cookie(REFRESH_TOKEN_COOKIE, token, REFRESH_COOKIE_OPTIONS);
+}
+
+function clearRefreshCookie(res) {
+  res.clearCookie(REFRESH_TOKEN_COOKIE, {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/api/auth',
+  });
+}
+
 // POST /api/auth/register
 async function register(req, res) {
   try {
@@ -8,6 +31,7 @@ async function register(req, res) {
     if (result.error) {
       return res.status(result.status).json({ error: result.error });
     }
+    setRefreshCookie(res, result.refreshToken);
     res.status(result.status).json(result.data);
   } catch (err) {
     console.error('Register error:', err);
@@ -25,6 +49,7 @@ async function login(req, res) {
     if (result.error) {
       return res.status(result.status).json({ error: result.error });
     }
+    setRefreshCookie(res, result.refreshToken);
     res.status(result.status).json(result.data);
   } catch (err) {
     console.error('Login error:', err);
@@ -35,10 +60,12 @@ async function login(req, res) {
 // POST /api/auth/refresh
 async function refresh(req, res) {
   try {
-    const result = await authService.refreshTokens(req.body);
+    const refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
+    const result = await authService.refreshTokens({ refreshToken });
     if (result.error) {
       return res.status(result.status).json({ error: result.error });
     }
+    setRefreshCookie(res, result.refreshToken);
     res.status(result.status).json(result.data);
   } catch (err) {
     console.error('Refresh error:', err);
@@ -49,10 +76,13 @@ async function refresh(req, res) {
 // POST /api/auth/logout
 async function logout(req, res) {
   try {
-    const result = await authService.logoutUser(req.body);
+    const refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
+    const result = await authService.logoutUser({ refreshToken });
+    clearRefreshCookie(res);
     res.status(result.status).json(result.data);
   } catch (err) {
     console.error('Logout error:', err);
+    clearRefreshCookie(res);
     res.json({ message: 'Logged out' });
   }
 }
@@ -141,6 +171,7 @@ async function googleExchange(req, res) {
     if (result.error) {
       return res.status(result.status).json({ error: result.error });
     }
+    setRefreshCookie(res, result.refreshToken);
     res.status(result.status).json(result.data);
   } catch (err) {
     console.error('Google exchange error:', err);

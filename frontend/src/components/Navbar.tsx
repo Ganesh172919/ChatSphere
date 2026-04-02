@@ -10,7 +10,7 @@ import { useState, useRef, useEffect } from 'react';
 export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, refreshToken, logout, isAuthenticated } = useAuthStore();
+  const { user, logout, isAuthenticated } = useAuthStore();
   const { disconnect } = useSocket();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -28,9 +28,7 @@ export default function Navbar() {
 
   const handleLogout = async () => {
     try {
-      if (refreshToken) {
-        await logoutUser(refreshToken);
-      }
+      await logoutUser();
     } catch {
       // Ignore logout errors
     }

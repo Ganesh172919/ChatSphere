@@ -45,7 +45,7 @@ export default function GoogleCallback() {
           return;
         }
 
-        login(data.user, data.accessToken, data.refreshToken);
+        login(data.user, data.accessToken);
         toast.success(`Welcome, ${data.user.displayName || data.user.username}!`);
         navigate('/dashboard', { replace: true });
       } catch {

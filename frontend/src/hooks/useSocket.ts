@@ -55,14 +55,8 @@ export function useSocket() {
       console.error('Socket connection error:', err.message);
 
       try {
-        const refreshToken = localStorage.getItem('refreshToken');
-        if (!refreshToken) {
-          useAuthStore.getState().logout();
-          return;
-        }
-
-        const tokens = await refreshAccessToken(refreshToken);
-        useAuthStore.getState().updateTokens(tokens.accessToken, tokens.refreshToken);
+        const tokens = await refreshAccessToken();
+        useAuthStore.getState().updateTokens(tokens.accessToken);
         socket.auth = { token: tokens.accessToken };
         socket.connect();
       } catch (refreshError) {
