@@ -14,7 +14,7 @@ const connectDB = require('./config/db');
 require('./config/passport');
 
 // Routes
-const authRoutes = require('./routes/auth');
+const authRoutes = require('./routes/auth.routes');
 const chatRoutes = require('./routes/chat');
 const conversationRoutes = require('./routes/conversations');
 const roomRoutes = require('./routes/rooms');
