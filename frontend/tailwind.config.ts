@@ -42,6 +42,9 @@ const config: Config = {
         'fade-in': 'fadeIn 0.5s ease-out forwards',
         'slide-up': 'slideUp 0.3s ease-out forwards',
         'glow-pulse': 'glowPulse 3s ease-in-out infinite',
+        'drift1': 'drift1 18s ease-in-out infinite',
+        'drift2': 'drift2 22s ease-in-out infinite',
+        'drift3': 'drift3 26s ease-in-out infinite',
       },
       keyframes: {
         float: {
@@ -67,6 +70,21 @@ const config: Config = {
         glowPulse: {
           '0%, 100%': { boxShadow: '0 0 8px rgba(168, 85, 247, 0.2)' },
           '50%': { boxShadow: '0 0 20px rgba(168, 85, 247, 0.4), 0 0 40px rgba(59, 130, 246, 0.2)' },
+        },
+        drift1: {
+          '0%, 100%': { transform: 'translate(0px, 0px)' },
+          '33%': { transform: 'translate(60px, 40px)' },
+          '66%': { transform: 'translate(-30px, 60px)' },
+        },
+        drift2: {
+          '0%, 100%': { transform: 'translate(0px, 0px)' },
+          '33%': { transform: 'translate(-50px, 60px)' },
+          '66%': { transform: 'translate(40px, -40px)' },
+        },
+        drift3: {
+          '0%, 100%': { transform: 'translate(0px, 0px)' },
+          '33%': { transform: 'translate(40px, -50px)' },
+          '66%': { transform: 'translate(-60px, 30px)' },
         },
       },
     },
