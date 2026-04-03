@@ -171,7 +171,7 @@ export default function GroupChat() {
         } else {
           clearCurrentRoom();
           setMembers([]);
-          setPolls([]);
+
           setOnlineUsers([]);
           setCreatorPrivateKey('');
         }
@@ -193,7 +193,7 @@ export default function GroupChat() {
       clearCurrentRoom();
       setRoomAccess(null);
       setMembers([]);
-      setPolls([]);
+
       setOnlineUsers([]);
       setCreatorPrivateKey('');
     };
@@ -204,9 +204,8 @@ export default function GroupChat() {
       return;
     }
 
-    void loadPolls();
     void loadMembers();
-  }, [currentRoom?.id, loadMembers, loadPolls, roomId]);
+  }, [currentRoom?.id, loadMembers, roomId]);
 
   const handleCopyInviteLink = useCallback(async () => {
     if (!roomId) return;
@@ -687,14 +686,7 @@ export default function GroupChat() {
             <span>Pinned Messages</span>
           </button>
 
-          {/* Polls button */}
-          <button
-            onClick={() => setShowPollModal(true)}
-            className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
-          >
-            <BarChart3 size={14} />
-            <span>Create Poll</span>
-          </button>
+
 
           {/* Members button */}
           <button
@@ -857,19 +849,7 @@ export default function GroupChat() {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-2 py-4 min-h-0" role="log" aria-live="polite">
             <div className="max-w-3xl mx-auto space-y-1">
-              {polls.length > 0 && (
-                <div className="mb-4 space-y-3">
-                  {polls.map((poll) => (
-                    <PollCard
-                      key={poll.id}
-                      poll={poll}
-                      currentUserId={user?.id || ''}
-                      onVote={handlePollVote}
-                      onClose={handleClosePoll}
-                    />
-                  ))}
-                </div>
-              )}
+
               {currentRoom.messages.length === 0 && (
                 <div className="text-center py-20">
                   <Hash size={32} className="text-navy-600 mx-auto mb-3" />
@@ -1072,18 +1052,7 @@ export default function GroupChat() {
         ) : null}
       </div>
 
-      {/* Poll create modal */}
-      <AnimatePresence>
-        {showPollModal && roomId && (
-          <CreatePollModal
-            roomId={roomId}
-            onCreated={(poll) => {
-              setPolls((current) => [poll, ...current]);
-            }}
-            onClose={() => setShowPollModal(false)}
-          />
-        )}
-      </AnimatePresence>
+
 
       {/* Member management modal */}
       <AnimatePresence>
