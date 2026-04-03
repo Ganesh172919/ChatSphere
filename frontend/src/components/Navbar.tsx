@@ -2,7 +2,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   MessageSquare, Users, LogOut, LayoutDashboard, Search,
-  User, Settings, Shield, Brain, FolderKanban, ChevronDown,
+  User, Settings, Shield, ChevronDown,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { logoutUser } from '../api/auth';
@@ -47,10 +47,8 @@ export default function Navbar() {
   const navLinks = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true },
     { to: '/chat', label: 'Solo Chat', icon: MessageSquare, exact: false },
-    { to: '/projects', label: 'Projects', icon: FolderKanban, exact: false },
     { to: '/rooms', label: 'Rooms', icon: Users, exact: false, alsoActive: '/group' },
     { to: '/search', label: 'Search', icon: Search, exact: false },
-    { to: '/memory', label: 'Memory', icon: Brain, exact: false },
   ];
 
   return (

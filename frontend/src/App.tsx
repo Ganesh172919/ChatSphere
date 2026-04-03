@@ -13,7 +13,6 @@ const GoogleCallback = lazy(() => import('./pages/GoogleCallback'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Projects = lazy(() => import('./pages/Projects'));
 const SoloChat = lazy(() => import('./pages/SoloChat'));
 const Rooms = lazy(() => import('./pages/Rooms'));
 const GroupChat = lazy(() => import('./pages/GroupChat'));
@@ -22,7 +21,6 @@ const SearchPage = lazy(() => import('./pages/SearchPage'));
 const Settings = lazy(() => import('./pages/Settings'));
 const ExportChat = lazy(() => import('./pages/ExportChat'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
-const MemoryCenter = lazy(() => import('./pages/MemoryCenter'));
 
 function AuthRedirect() {
   const { isAuthenticated } = useAuthStore();
@@ -77,14 +75,6 @@ export default function App() {
               )}
             />
             <Route
-              path="/projects"
-              element={(
-                <ProtectedRoute>
-                  <Projects />
-                </ProtectedRoute>
-              )}
-            />
-            <Route
               path="/chat"
               element={(
                 <ProtectedRoute>
@@ -129,14 +119,6 @@ export default function App() {
               element={(
                 <ProtectedRoute>
                   <Settings />
-                </ProtectedRoute>
-              )}
-            />
-            <Route
-              path="/memory"
-              element={(
-                <ProtectedRoute>
-                  <MemoryCenter />
                 </ProtectedRoute>
               )}
             />

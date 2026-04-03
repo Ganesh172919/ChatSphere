@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const Room = require('../models/Room');
@@ -20,6 +21,7 @@ function formatRoomSummary(room, currentUserId, messageCount = 0) {
     description: room.description,
     tags: room.tags || [],
     maxUsers: room.maxUsers,
+    visibility: room.visibility || 'public',
     memberCount: room.members ? room.members.length : 0,
     creatorId: room.creatorId.toString(),
     createdAt: room.createdAt,
@@ -29,7 +31,11 @@ function formatRoomSummary(room, currentUserId, messageCount = 0) {
   };
 }
 
-async function ensureRoomMember(roomId, userId, selection = 'name description tags maxUsers members creatorId createdAt') {
+function generatePrivateJoinKey() {
+  return crypto.randomBytes(12).toString('hex').toUpperCase();
+}
+
+async function ensureRoomMember(roomId, userId, selection = 'name description tags maxUsers visibility members creatorId createdAt') {
   if (!isValidObjectId(roomId)) {
     return { room: null, error: { status: 400, message: 'Invalid room ID' } };
   }
@@ -50,7 +56,7 @@ async function ensureRoomMember(roomId, userId, selection = 'name description ta
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const rooms = await Room.find()
-      .select('name description tags maxUsers members creatorId createdAt')
+      .select('name description tags maxUsers visibility members creatorId createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -71,7 +77,7 @@ router.get('/', authMiddleware, async (req, res) => {
 // POST /api/rooms
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { name, description, tags, maxUsers } = req.body;
+    const { name, description, tags, maxUsers, visibility } = req.body;
 
     if (!name || name.trim().length === 0) {
       return res.status(400).json({ error: 'Room name is required' });
@@ -82,6 +88,7 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     const parsedMaxUsers = Math.min(Math.max(parseInt(maxUsers, 10) || 20, 2), 100);
+    const parsedVisibility = visibility === 'private' ? 'private' : 'public';
     const parsedTags = Array.isArray(tags)
       ? [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean).slice(0, 8))]
       : [];
@@ -91,15 +98,49 @@ router.post('/', authMiddleware, async (req, res) => {
       description: typeof description === 'string' ? description.trim().slice(0, 500) : '',
       tags: parsedTags,
       maxUsers: parsedMaxUsers,
+      visibility: parsedVisibility,
+      privateJoinKey: parsedVisibility === 'private' ? generatePrivateJoinKey() : null,
       creatorId: req.user.id,
       members: [{ userId: req.user.id, role: 'admin', joinedAt: new Date() }],
     });
 
     await room.save();
-    res.status(201).json(formatRoomSummary(room.toObject(), req.user.id, 0));
+    res.status(201).json({
+      ...formatRoomSummary(room.toObject(), req.user.id, 0),
+      privateJoinKey: parsedVisibility === 'private' ? room.privateJoinKey : null,
+    });
   } catch (err) {
     console.error('Create room error:', err);
     res.status(500).json({ error: 'Failed to create room' });
+  }
+});
+
+// GET /api/rooms/:id/access
+router.get('/:id/access', authMiddleware, async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.id)
+      .select('name description tags maxUsers visibility members creatorId createdAt')
+      .lean();
+
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    const messageCount = await Message.countDocuments({ roomId: room._id });
+    const isMember = Boolean(findRoomMember(room, req.user.id));
+
+    res.json({
+      ...formatRoomSummary(room, req.user.id, messageCount),
+      hasAccess: isMember,
+      requiresJoinKey: room.visibility === 'private' && !isMember,
+    });
+  } catch (err) {
+    console.error('Get room access error:', err);
+    res.status(500).json({ error: 'Failed to load room access' });
   }
 });
 
@@ -118,6 +159,13 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
 
     const existingMember = findRoomMember(room, req.user.id);
     if (!existingMember) {
+      if (room.visibility === 'private') {
+        const joinKey = typeof req.body?.joinKey === 'string' ? req.body.joinKey.trim().toUpperCase() : '';
+        if (!joinKey || joinKey !== room.privateJoinKey) {
+          return res.status(403).json({ error: 'A valid room key is required to join this private room' });
+        }
+      }
+
       if (room.members.length >= room.maxUsers) {
         return res.status(409).json({ error: 'This room is already full' });
       }
@@ -139,6 +187,36 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Join room error:', err);
     res.status(500).json({ error: 'Failed to join room' });
+  }
+});
+
+// GET /api/rooms/:id/private-key
+router.get('/:id/private-key', authMiddleware, async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.id)
+      .select('visibility privateJoinKey creatorId')
+      .lean();
+
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    if (room.creatorId.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Only the room creator can view the private key' });
+    }
+
+    if (room.visibility !== 'private' || !room.privateJoinKey) {
+      return res.status(404).json({ error: 'This room does not use a private key' });
+    }
+
+    res.json({ privateJoinKey: room.privateJoinKey });
+  } catch (err) {
+    console.error('Get private key error:', err);
+    res.status(500).json({ error: 'Failed to load room key' });
   }
 });
 
@@ -233,12 +311,10 @@ router.get('/:id', authMiddleware, async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
-    const insight = await getRoomInsight(room._id.toString());
 
     res.json({
       ...formatRoomSummary(room, req.user.id, messages.length),
       messages: messages.reverse().map(formatMessage),
-      insight,
     });
   } catch (err) {
     console.error('Get room error:', err);

@@ -48,9 +48,7 @@ const { isValidObjectId, findRoomMember, hasRoomRole } = require('./helpers/vali
 // Services
 const { sendGroupMessage, getAvailableModels, refreshModelCatalogs, resolveModel } = require('./services/gemini');
 const { consumeAiQuota } = require('./services/aiQuota');
-const { getRoomInsight, refreshRoomInsight } = require('./services/conversationInsights');
-const { formatMessage: sharedFormatMessage, validateAttachmentPayload: sharedValidateAttachmentPayload } = require('./services/messageFormatting');
-const { markMemoriesUsed, retrieveRelevantMemories, upsertMemoryEntries } = require('./services/memory');
+const { validateAttachmentPayload: sharedValidateAttachmentPayload } = require('./services/messageFormatting');
 
 const app = express();
 const server = http.createServer(app);
@@ -350,7 +348,7 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // -- join_room (with auto-membership) --
+  // -- join_room --
   socket.on('join_room', async (roomId, callback) => {
     const ack = getAck(callback);
     if (isFlooded(socket, ack)) return;
@@ -362,25 +360,13 @@ io.on('connection', async (socket) => {
         return emitSocketError(socket, ack, 'Invalid room ID');
       }
 
-      let room = await Room.findById(roomId).select('members maxUsers');
+      const room = await Room.findById(roomId).select('members maxUsers');
       if (!room) {
         return emitSocketError(socket, ack, 'Room not found');
       }
 
-      // Auto-add user to room if not already a member
       if (!findRoomMember(room, socket.user.id)) {
-        if (room.members.length >= room.maxUsers) {
-          console.warn(`⚠ [ROOM] join_room denied for ${socket.user.username}: Room is full`);
-          return emitSocketError(socket, ack, 'This room is already full');
-        }
-
-        room.members.push({
-          userId: socket.user.id,
-          role: 'member',
-          joinedAt: new Date(),
-        });
-        await room.save();
-        console.log(`✦ [ROOM] ${socket.user.username} auto-joined room ${roomId} via socket`);
+        return emitSocketError(socket, ack, 'Join this room before connecting to chat');
       }
 
       if (isSocketInRoom(roomId, socket.id)) {
@@ -580,10 +566,7 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
-      // Memory extraction is only performed when @ai is triggered via room_ai_chat
-
       await maybeMarkMessageDelivered(msg, roomId);
-      await refreshRoomInsight(roomId);
       const messageData = formatMessage(msg);
       io.to(roomId).emit('receive_message', messageData);
 
@@ -646,10 +629,7 @@ io.on('connection', async (socket) => {
       });
       await msg.save();
 
-      // Memory extraction is only performed when @ai is triggered via room_ai_chat
-
       await maybeMarkMessageDelivered(msg, roomId);
-      await refreshRoomInsight(roomId);
       const messageData = formatMessage(msg);
       io.to(roomId).emit('receive_message', messageData);
       ack({ success: true, messageId: msg._id.toString(), message: messageData });
@@ -745,27 +725,9 @@ io.on('connection', async (socket) => {
         return emitSocketError(socket, ack, 'Join the room before using AI');
       }
 
-      const [memoryEntries, insight] = await Promise.all([
-        retrieveRelevantMemories({
-          userId: socket.user.id,
-          query: prompt.trim(),
-          limit: 5,
-        }),
-        getRoomInsight(roomId),
-      ]);
-
-      await upsertMemoryEntries({
-        userId: socket.user.id,
-        text: prompt.trim(),
-        sourceType: 'room',
-        sourceRoomId: roomId,
-      });
-
       console.log(`→ [AI] Trigger from ${socket.user.username} in room ${room.name} using ${requestedModel?.id || 'fallback/offline'} via ${requestedModel?.provider || 'fallback'}`);
 
       const response = await sendGroupMessage(room.aiHistory, prompt.trim(), socket.user.username, {
-        memoryEntries,
-        insight,
         roomName: room.name,
         modelId,
         attachment,
@@ -793,15 +755,8 @@ io.on('connection', async (socket) => {
         reactions: new Map(),
         modelId: response.model.id,
         provider: response.model.provider,
-        memoryRefs: memoryEntries.slice(0, 5).map((entry) => ({
-          id: entry._id.toString(),
-          summary: entry.summary,
-          score: entry.score,
-        })),
       });
       await aiMsg.save();
-      await markMemoriesUsed(memoryEntries);
-      await refreshRoomInsight(roomId);
 
       console.log(`✦ [AI] Room response ready from ${response.model.id} via ${response.model.provider} (${response.content.length} chars)`);
       io.to(roomId).emit('ai_thinking', { roomId, status: false });
@@ -876,7 +831,6 @@ io.on('connection', async (socket) => {
       msg.isEdited = true;
       msg.editedAt = new Date();
       await msg.save();
-      await refreshRoomInsight(roomId);
 
       io.to(roomId).emit('message_edited', {
         messageId: msg._id.toString(),
@@ -928,7 +882,6 @@ io.on('connection', async (socket) => {
 
       room.pinnedMessages = room.pinnedMessages.filter((id) => id.toString() !== messageId.toString());
       await room.save();
-      await refreshRoomInsight(roomId);
 
       io.to(roomId).emit('message_deleted', {
         messageId: msg._id.toString(),

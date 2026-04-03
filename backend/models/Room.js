@@ -25,6 +25,15 @@ const roomSchema = new mongoose.Schema({
     min: 2,
     max: 100,
   },
+  visibility: {
+    type: String,
+    enum: ['public', 'private'],
+    default: 'public',
+  },
+  privateJoinKey: {
+    type: String,
+    default: null,
+  },
   creatorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

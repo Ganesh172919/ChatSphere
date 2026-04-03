@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Hash, Sparkles } from 'lucide-react';
+import { Globe, Hash, Lock, Sparkles, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import type { RoomVisibility } from '../api/rooms';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (name: string, description: string, tags: string[], maxUsers: number) => void;
+  onCreate: (name: string, description: string, tags: string[], maxUsers: number, visibility: RoomVisibility) => void;
 }
 
 export default function CreateRoomModal({ isOpen, onClose, onCreate }: Props) {
@@ -14,6 +15,7 @@ export default function CreateRoomModal({ isOpen, onClose, onCreate }: Props) {
   const [description, setDescription] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [maxUsers, setMaxUsers] = useState(20);
+  const [visibility, setVisibility] = useState<RoomVisibility>('public');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,11 +35,12 @@ export default function CreateRoomModal({ isOpen, onClose, onCreate }: Props) {
       .map((t) => t.trim())
       .filter(Boolean);
 
-    onCreate(name.trim(), description.trim(), tags, maxUsers);
+    onCreate(name.trim(), description.trim(), tags, maxUsers, visibility);
     setName('');
     setDescription('');
     setTagsInput('');
     setMaxUsers(20);
+    setVisibility('public');
   };
 
   return (
@@ -113,6 +116,42 @@ export default function CreateRoomModal({ isOpen, onClose, onCreate }: Props) {
                     placeholder="ai, coding, math (comma-separated)"
                     className="w-full px-4 py-3 rounded-xl bg-navy-900 border border-navy-600/50 text-white placeholder-gray-600 focus:border-neon-purple/50 transition-colors"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5">Room Privacy</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setVisibility('public')}
+                      className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                        visibility === 'public'
+                          ? 'border-neon-blue/50 bg-neon-blue/10 text-white'
+                          : 'border-navy-600/50 bg-navy-900 text-gray-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Globe size={14} />
+                        Public
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-500">Anyone can join directly.</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVisibility('private')}
+                      className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                        visibility === 'private'
+                          ? 'border-neon-purple/50 bg-neon-purple/10 text-white'
+                          : 'border-navy-600/50 bg-navy-900 text-gray-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Lock size={14} />
+                        Private
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-500">A join key is generated for members.</p>
+                    </button>
+                  </div>
                 </div>
 
                 <div>

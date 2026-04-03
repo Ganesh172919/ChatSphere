@@ -40,6 +40,8 @@ export interface Conversation {
   sourceType?: string;
   sourceLabel?: string;
   insight?: ConversationInsight | null;
+  preferredProvider?: string | null;
+  preferredModelId?: string | null;
 }
 
 interface ChatState {
@@ -54,6 +56,10 @@ interface ChatState {
   updateConversationTitle: (conversationId: string, title: string) => void;
   updateConversationServerId: (conversationId: string, serverId: string) => void;
   updateConversationInsight: (conversationId: string, insight: ConversationInsight | null) => void;
+  updateConversationPreferences: (
+    conversationId: string,
+    updates: Pick<Conversation, 'preferredProvider' | 'preferredModelId'>
+  ) => void;
   deleteConversation: (conversationId: string) => void;
   getActiveConversation: () => Conversation | undefined;
   loadConversations: (conversations: Conversation[]) => void;
@@ -141,6 +147,18 @@ export const useChatStore = create<ChatState>()(
             conversation.id === conversationId ? { ...conversation, insight } : conversation
           ),
         })),
+      updateConversationPreferences: (conversationId, updates) =>
+        set((state) => ({
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  preferredProvider: updates.preferredProvider ?? conversation.preferredProvider ?? null,
+                  preferredModelId: updates.preferredModelId ?? conversation.preferredModelId ?? null,
+                }
+              : conversation
+          ),
+        })),
       deleteConversation: (conversationId) =>
         set((state) => {
           const conversations = state.conversations.filter((conversation) => conversation.id !== conversationId);
@@ -158,11 +176,44 @@ export const useChatStore = create<ChatState>()(
       },
       loadConversations: (conversations) =>
         set((state) => ({
-          conversations: sortByUpdatedDate(conversations),
+          conversations: sortByUpdatedDate(conversations.map((conversation) => {
+            const existing = state.conversations.find((item) =>
+              item.id === conversation.id || (item.serverId && item.serverId === conversation.id)
+            );
+
+            if (!existing) {
+              return conversation;
+            }
+
+            return {
+              ...conversation,
+              messages: existing.messages.length > 0 ? existing.messages : conversation.messages,
+              insight: existing.insight ?? conversation.insight ?? null,
+              preferredProvider: existing.preferredProvider ?? conversation.preferredProvider ?? null,
+              preferredModelId: existing.preferredModelId ?? conversation.preferredModelId ?? null,
+            };
+          })),
           activeConversationId:
-            state.activeConversationId && conversations.some((conversation) => conversation.id === state.activeConversationId)
-              ? state.activeConversationId
-              : conversations[0]?.id || null,
+            (() => {
+              if (!state.activeConversationId) {
+                return conversations[0]?.id || null;
+              }
+
+              const directMatch = conversations.find((conversation) => conversation.id === state.activeConversationId);
+              if (directMatch) {
+                return directMatch.id;
+              }
+
+              const existing = state.conversations.find((item) => item.id === state.activeConversationId);
+              if (existing?.serverId) {
+                const serverMatch = conversations.find((conversation) => conversation.id === existing.serverId);
+                if (serverMatch) {
+                  return serverMatch.id;
+                }
+              }
+
+              return conversations[0]?.id || null;
+            })(),
         })),
     }),
     {

@@ -1,27 +1,22 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Hash, X, Pin, BarChart3, Shield, Paperclip, Loader2, Copy, Crown, UserRoundCheck } from 'lucide-react';
+import { Send, ArrowLeft, Copy, Crown, Globe, Hash, KeyRound, Lock, Pin, BarChart3, Shield, Paperclip, Loader2, UserRoundCheck, X } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import MessageBubble from '../components/MessageBubble';
 import TypingIndicator from '../components/TypingIndicator';
 import UserList from '../components/UserList';
 import PinnedMessages from '../components/PinnedMessages';
-import SmartReplies from '../components/SmartReplies';
-import ConversationInsightsPanel from '../components/ConversationInsightsPanel';
 import { CreatePollModal, PollCard } from '../components/PollComponents';
 import MemberManagement from '../components/MemberManagement';
-import GrammarSuggestion from '../components/GrammarSuggestion';
-import { analyzeSentiment, fetchAvailableModels, type AIModel } from '../api/ai';
+import { fetchAvailableModels, type AIModel } from '../api/ai';
 import { fetchMembers, type GroupMember } from '../api/groups';
-import { fetchSettings } from '../api/settings';
 import { useSocket } from '../hooks/useSocket';
 import { useRoomStore } from '../store/roomStore';
 import { useAuthStore } from '../store/authStore';
-import { fetchRoomById, fetchRoomInsight, joinRoomById, runRoomAction, uploadFile } from '../api/rooms';
-import type { GroupMessage } from '../api/rooms';
+import { fetchRoomAccess, fetchRoomById, fetchRoomPrivateKey, joinRoomById, uploadFile } from '../api/rooms';
+import type { GroupMessage, RoomAccess } from '../api/rooms';
 import type { Poll } from '../api/polls';
-import type { ConversationInsight } from '../types/chat';
 import { closePoll, fetchPolls, votePoll } from '../api/polls';
 import { getModelGroups } from '../utils/aiModels';
 import toast from 'react-hot-toast';
@@ -36,9 +31,11 @@ const GROUP_MODEL_STORAGE_KEY = 'chatsphere.group.model';
 export default function GroupChat() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuthStore();
   const { socket, joinRoom, leaveRoom, sendMessage, sendFileMessage, replyMessage, addReaction, triggerAi, editMessage, deleteMessage, emitTyping, stopTyping, pinMessage, unpinMessage } = useSocket();
   const { currentRoom, setCurrentRoom, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, onlineUsers, setOnlineUsers, aiThinking, setAiThinking, clearCurrentRoom } = useRoomStore();
+  const initialPrivateKey = ((location.state as { privateJoinKey?: string } | null)?.privateJoinKey || '').trim();
 
   const [input, setInput] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; username: string; content: string } | null>(null);
@@ -50,10 +47,12 @@ export default function GroupChat() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [polls, setPolls] = useState<Poll[]>([]);
-  const [roomInsight, setRoomInsight] = useState<ConversationInsight | null>(null);
-  const [insightLoading, setInsightLoading] = useState(false);
-  const [sentimentEnabled, setSentimentEnabled] = useState(false);
-  const [messageSentiments, setMessageSentiments] = useState<Record<string, { sentiment: string; emoji: string; confidence: number }>>({});
+  const [roomAccess, setRoomAccess] = useState<RoomAccess | null>(null);
+  const [roomLoading, setRoomLoading] = useState(true);
+  const [joinKey, setJoinKey] = useState('');
+  const [isJoiningRoom, setIsJoiningRoom] = useState(false);
+  const [creatorPrivateKey, setCreatorPrivateKey] = useState(initialPrivateKey || '');
+  const [privateKeyLoading, setPrivateKeyLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<AIModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [loadingModels, setLoadingModels] = useState(true);
@@ -64,7 +63,6 @@ export default function GroupChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const sentimentPendingRef = useRef(new Set<string>());
 
   const canModerateMessages = currentRoom?.currentUserRole === 'creator'
     || currentRoom?.currentUserRole === 'admin'
@@ -76,17 +74,6 @@ export default function GroupChat() {
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
-
-  const loadRoomInsight = useCallback(async () => {
-    if (!roomId) return;
-
-    try {
-      const insight = await fetchRoomInsight(roomId, selectedModelId || activeModel?.id);
-      setRoomInsight(insight);
-    } catch {
-      setRoomInsight(null);
-    }
-  }, [roomId, selectedModelId, activeModel?.id]);
 
   const loadPolls = useCallback(async () => {
     if (!roomId) return;
@@ -112,6 +99,36 @@ export default function GroupChat() {
       setMembersLoading(false);
     }
   }, [roomId]);
+
+  const loadCreatorPrivateKey = useCallback(async (roomVisibility: RoomAccess['visibility'], currentUserRole?: RoomAccess['currentUserRole']) => {
+    if (!roomId || roomVisibility !== 'private' || currentUserRole !== 'creator') {
+      setCreatorPrivateKey('');
+      return;
+    }
+
+    setPrivateKeyLoading(true);
+    try {
+      const { privateJoinKey } = await fetchRoomPrivateKey(roomId);
+      setCreatorPrivateKey(privateJoinKey);
+    } catch {
+      setCreatorPrivateKey((current) => current || '');
+    } finally {
+      setPrivateKeyLoading(false);
+    }
+  }, [roomId]);
+
+  const loadMemberRoom = useCallback(async () => {
+    if (!roomId) return;
+
+    const room = await fetchRoomById(roomId);
+    setCurrentRoom(room);
+    setRoomAccess({
+      ...room,
+      hasAccess: true,
+      requiresJoinKey: false,
+    });
+    void loadCreatorPrivateKey(room.visibility, room.currentUserRole);
+  }, [roomId, setCurrentRoom, loadCreatorPrivateKey]);
 
   useEffect(() => {
     const loadModels = async () => {
@@ -145,112 +162,61 @@ export default function GroupChat() {
     }
   }, [selectedModelId]);
 
-  // Load room data
   useEffect(() => {
     if (!roomId) return;
 
-    const loadRoom = async () => {
+    let cancelled = false;
+
+    const loadAccess = async () => {
+      setRoomLoading(true);
       try {
-        let room;
+        const access = await fetchRoomAccess(roomId);
+        if (cancelled) return;
 
-        try {
-          room = await fetchRoomById(roomId);
-        } catch (err: unknown) {
-          const accessError = err as { response?: { status?: number; data?: { error?: string } } };
+        setRoomAccess(access);
+        setJoinKey('');
 
-          if (accessError.response?.status !== 403) {
-            throw err;
-          }
-
-          await joinRoomById(roomId);
-          room = await fetchRoomById(roomId);
+        if (access.hasAccess) {
+          await loadMemberRoom();
+        } else {
+          clearCurrentRoom();
+          setMembers([]);
+          setPolls([]);
+          setOnlineUsers([]);
+          setCreatorPrivateKey('');
         }
-
-        setCurrentRoom(room);
-        setRoomInsight(room.insight || null);
       } catch (err: unknown) {
         const error = err as { response?: { data?: { error?: string } } };
         toast.error(error.response?.data?.error || 'Unable to open this room');
         navigate('/rooms');
-      }
-    };
-
-    loadRoom();
-    return () => {
-      clearCurrentRoom();
-    };
-  }, [roomId, setCurrentRoom, clearCurrentRoom, navigate]);
-
-  useEffect(() => {
-    void loadPolls();
-    void loadRoomInsight();
-    void loadMembers();
-  }, [loadPolls, loadRoomInsight, loadMembers]);
-
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const settings = await fetchSettings();
-        setSentimentEnabled(settings.aiFeatures.sentimentAnalysis);
-      } catch {
-        setSentimentEnabled(false);
-      }
-    };
-
-    void loadSettings();
-  }, []);
-
-  useEffect(() => {
-    if (!sentimentEnabled || !currentRoom) {
-      return;
-    }
-
-    const candidates = currentRoom.messages
-      .filter((message) => !message.isAI && message.userId !== user?.id && !messageSentiments[message.id] && message.content.trim().length > 0)
-      .slice(-6);
-
-    if (candidates.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadSentiments = async () => {
-      for (const message of candidates) {
-        if (sentimentPendingRef.current.has(message.id)) {
-          continue;
-        }
-
-        sentimentPendingRef.current.add(message.id);
-        try {
-          const sentiment = await analyzeSentiment(message.content, selectedModelId || activeModel?.id);
-          if (cancelled) {
-            sentimentPendingRef.current.delete(message.id);
-            return;
-          }
-
-          setMessageSentiments((current) => ({
-            ...current,
-            [message.id]: {
-              sentiment: sentiment.sentiment,
-              emoji: sentiment.emoji,
-              confidence: sentiment.confidence,
-            },
-          }));
-        } catch {
-          return;
-        } finally {
-          sentimentPendingRef.current.delete(message.id);
+      } finally {
+        if (!cancelled) {
+          setRoomLoading(false);
         }
       }
     };
 
-    void loadSentiments();
+    void loadAccess();
 
     return () => {
       cancelled = true;
+      clearCurrentRoom();
+      setRoomAccess(null);
+      setMembers([]);
+      setPolls([]);
+      setOnlineUsers([]);
+      setCreatorPrivateKey('');
     };
-  }, [activeModel?.id, currentRoom, messageSentiments, selectedModelId, sentimentEnabled, user?.id]);
+  }, [roomId, clearCurrentRoom, loadMemberRoom, navigate, setOnlineUsers]);
+
+  useEffect(() => {
+    if (!currentRoom?.id || currentRoom.id !== roomId) {
+      return;
+    }
+
+    void loadPolls();
+    void loadMembers();
+  }, [currentRoom?.id, loadMembers, loadPolls, roomId]);
 
   const handleCopyInviteLink = useCallback(async () => {
     if (!roomId) return;
@@ -263,6 +229,33 @@ export default function GroupChat() {
       toast.error('Failed to copy invite link');
     }
   }, [roomId]);
+
+  const handleCopyPrivateKey = useCallback(async () => {
+    if (!creatorPrivateKey) return;
+
+    try {
+      await navigator.clipboard.writeText(creatorPrivateKey);
+      toast.success('Private room key copied');
+    } catch {
+      toast.error('Failed to copy the room key');
+    }
+  }, [creatorPrivateKey]);
+
+  const handleJoinRoom = useCallback(async () => {
+    if (!roomId || !roomAccess || isJoiningRoom) return;
+
+    setIsJoiningRoom(true);
+    try {
+      await joinRoomById(roomId, roomAccess.visibility === 'private' ? joinKey : undefined);
+      await loadMemberRoom();
+      toast.success(roomAccess.visibility === 'private' ? 'Private room joined' : 'Room joined');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } } };
+      toast.error(error.response?.data?.error || 'Failed to join room');
+    } finally {
+      setIsJoiningRoom(false);
+    }
+  }, [isJoiningRoom, joinKey, loadMemberRoom, roomAccess, roomId]);
 
   // Join room via socket
   useEffect(() => {
@@ -309,12 +302,10 @@ export default function GroupChat() {
 
     const handleMessage = (message: GroupMessage) => {
       addMessageToCurrentRoom(message);
-      void loadRoomInsight();
     };
 
     const handleAiResponse = (message: GroupMessage) => {
       addMessageToCurrentRoom(message);
-      void loadRoomInsight();
     };
 
     const handleAiThinking = ({ status }: { status: boolean }) => {
@@ -403,7 +394,7 @@ export default function GroupChat() {
       socket.off('message_pinned', handleMessagePinned);
       socket.off('message_unpinned', handleMessageUnpinned);
     };
-  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, setOnlineUsers, setAiThinking, loadRoomInsight]);
+  }, [socket, user?.id, addMessageToCurrentRoom, updateMessageReactions, editMessageInCurrentRoom, deleteMessageInCurrentRoom, updateMessageStatusInCurrentRoom, setMessagePinnedState, setOnlineUsers, setAiThinking]);
 
   // Auto-scroll
   useEffect(() => {
@@ -567,21 +558,7 @@ export default function GroupChat() {
     }
   };
 
-  const handleInsightAction = async (action: 'summarize' | 'extract-tasks' | 'extract-decisions') => {
-    if (!roomId || insightLoading) return;
-
-    setInsightLoading(true);
-    try {
-      const result = await runRoomAction(roomId, action, selectedModelId || activeModel?.id);
-      setRoomInsight(result.insight);
-    } catch {
-      toast.error('Failed to refresh room insight');
-    } finally {
-      setInsightLoading(false);
-    }
-  };
-
-  if (!currentRoom) {
+  if (roomLoading) {
     return (
       <div className="h-screen flex flex-col bg-navy-900">
         <Navbar />
@@ -591,6 +568,97 @@ export default function GroupChat() {
             <p className="text-gray-500">Loading room...</p>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (!currentRoom) {
+    return (
+      <div className="min-h-screen bg-navy-900">
+        <Navbar />
+        <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl items-center justify-center px-4 pt-24 pb-12">
+          <div className="w-full rounded-3xl border border-navy-700/60 bg-navy-800/80 p-8 shadow-2xl shadow-black/20">
+            <Link
+              to="/rooms"
+              className="mb-6 inline-flex items-center gap-2 text-sm text-gray-400 transition-colors hover:text-white"
+            >
+              <ArrowLeft size={14} />
+              Back to rooms
+            </Link>
+
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="mb-2 flex items-center gap-2">
+                  <div className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium ${
+                    roomAccess?.visibility === 'private'
+                      ? 'border border-amber-400/20 bg-amber-400/10 text-amber-300'
+                      : 'border border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
+                  }`}>
+                    {roomAccess?.visibility === 'private' ? <Lock size={12} /> : <Globe size={12} />}
+                    {roomAccess?.visibility === 'private' ? 'Private room' : 'Public room'}
+                  </div>
+                </div>
+                <h1 className="truncate font-display text-2xl font-semibold text-white">
+                  {roomAccess?.name || 'Room access'}
+                </h1>
+                <p className="mt-2 text-sm text-gray-400">
+                  {roomAccess?.description || 'Join this room to start chatting with the group.'}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-navy-900/70 px-4 py-3 text-right">
+                <p className="text-[10px] uppercase tracking-[0.22em] text-gray-500">Members</p>
+                <p className="mt-1 text-lg font-semibold text-white">{roomAccess?.memberCount || 0}</p>
+              </div>
+            </div>
+
+            {roomAccess?.tags?.length ? (
+              <div className="mb-5 flex flex-wrap gap-2">
+                {roomAccess.tags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-navy-600/60 bg-navy-900/60 px-3 py-1 text-[11px] text-gray-300">
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="rounded-2xl border border-navy-700/60 bg-navy-900/50 p-5">
+              {roomAccess?.visibility === 'private' ? (
+                <>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400/10 text-amber-300">
+                      <KeyRound size={18} />
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-semibold text-white">Room key required</h2>
+                      <p className="text-xs text-gray-500">Ask the room creator for the private join key, then enter it here.</p>
+                    </div>
+                  </div>
+                  <input
+                    value={joinKey}
+                    onChange={(event) => setJoinKey(event.target.value.toUpperCase())}
+                    placeholder="Enter private room key"
+                    className="mb-3 w-full rounded-xl border border-navy-600/60 bg-navy-950/60 px-4 py-3 text-sm uppercase tracking-[0.15em] text-white placeholder:text-gray-600 focus:outline-none focus:border-amber-400/40"
+                  />
+                </>
+              ) : (
+                <div className="mb-4">
+                  <h2 className="text-sm font-semibold text-white">Join this public room</h2>
+                  <p className="mt-1 text-xs text-gray-500">Public rooms can be joined right away and show messages as soon as you enter.</p>
+                </div>
+              )}
+
+              <button
+                onClick={() => void handleJoinRoom()}
+                disabled={isJoiningRoom || (roomAccess?.visibility === 'private' && !joinKey.trim())}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-neon-purple to-neon-blue px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                type="button"
+              >
+                {isJoiningRoom ? <Loader2 size={16} className="animate-spin" /> : roomAccess?.visibility === 'private' ? <KeyRound size={16} /> : <Hash size={16} />}
+                {roomAccess?.visibility === 'private' ? 'Join with key' : 'Join room'}
+              </button>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -609,6 +677,14 @@ export default function GroupChat() {
             >
               <ArrowLeft size={14} /> All Rooms
             </Link>
+            <div className={`mb-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium ${
+              currentRoom.visibility === 'private'
+                ? 'border border-amber-400/20 bg-amber-400/10 text-amber-300'
+                : 'border border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
+            }`}>
+              {currentRoom.visibility === 'private' ? <Lock size={10} /> : <Globe size={10} />}
+              {currentRoom.visibility === 'private' ? 'Private room' : 'Public room'}
+            </div>
             <h2 className="font-display font-bold text-lg text-white flex items-center gap-2">
               <Hash size={16} className="text-neon-purple" />
               {currentRoom.name}
@@ -662,8 +738,34 @@ export default function GroupChat() {
               className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-navy-700 transition-all"
             >
               <Copy size={14} />
-              <span>Copy Invite Link</span>
+              <span>Copy Room Link</span>
             </button>
+          ) : null}
+
+          {currentRoom.visibility === 'private' && currentRoom.currentUserRole === 'creator' ? (
+            <div className="mx-4 mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-sm font-semibold text-white">Private Room Key</h3>
+                  <p className="text-[11px] text-gray-500">Share this key with members who should join.</p>
+                </div>
+                <KeyRound size={16} className="text-amber-300" />
+              </div>
+              <div className="rounded-xl border border-navy-700/60 bg-navy-900/70 px-3 py-2">
+                <p className="font-mono text-sm tracking-[0.18em] text-amber-200">
+                  {privateKeyLoading ? 'LOADING...' : creatorPrivateKey || 'Unavailable'}
+                </p>
+              </div>
+              <button
+                onClick={() => void handleCopyPrivateKey()}
+                disabled={!creatorPrivateKey}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:opacity-40"
+                type="button"
+              >
+                <Copy size={13} />
+                Copy Private Key
+              </button>
+            </div>
           ) : null}
 
           <div className="mx-4 mt-4 rounded-2xl border border-navy-700/50 bg-navy-900/35 p-4">
@@ -716,15 +818,6 @@ export default function GroupChat() {
                 View all {members.length} members →
               </button>
             ) : null}
-          </div>
-
-          <div className="mx-4 mt-4">
-            <ConversationInsightsPanel
-              heading="Room Insight"
-              insight={roomInsight}
-              loading={insightLoading}
-              onAction={handleInsightAction}
-            />
           </div>
 
           <div className="flex-1" />
@@ -848,8 +941,6 @@ export default function GroupChat() {
                   canEdit={msg.userId === user?.id && !msg.isDeleted}
                   canDelete={(msg.userId === user?.id || canModerateMessages) && !msg.isDeleted}
                   index={i}
-                  memoryRefs={msg.isAI ? msg.memoryRefs : undefined}
-                  sentiment={messageSentiments[msg.id] || null}
                   modelId={msg.modelId}
                   provider={msg.provider}
                 />
@@ -879,21 +970,6 @@ export default function GroupChat() {
             </div>
           </div>
 
-          {/* Smart replies */}
-          <div className="flex-shrink-0">
-            {currentRoom && currentRoom.messages.length > 0 && currentRoom.messages[currentRoom.messages.length - 1]?.isAI && (
-              <SmartReplies
-                messages={currentRoom.messages.slice(-6).map(m => ({
-                  username: m.username,
-                  content: m.content,
-                }))}
-                context={`Group chat room: ${currentRoom.name}`}
-                modelId={selectedModelId || activeModel?.id}
-                onSelect={(reply) => setInput(reply)}
-              />
-            )}
-          </div>
-
           {/* Reply indicator */}
           <AnimatePresence>
             {replyTo && (
@@ -918,12 +994,6 @@ export default function GroupChat() {
           {/* Input area — pinned to bottom */}
           <div className="border-t border-navy-800/50 px-4 py-3 flex-shrink-0">
             <div className="max-w-3xl mx-auto">
-              <GrammarSuggestion
-                text={input}
-                onAccept={(corrected) => setInput(corrected)}
-                enabled={true}
-                modelId={selectedModelId || activeModel?.id}
-              />
               {selectedFile && (
                 <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-navy-700/50 bg-navy-800/60 px-3 py-2 text-xs text-gray-300">
                   <div className="min-w-0">

@@ -32,6 +32,7 @@ export function useChat(activeProject?: ProjectSummary | null) {
     setConversationMessages,
     updateMessage,
     updateConversationInsight,
+    updateConversationPreferences,
     updateConversationServerId,
   } = useChatStore();
 
@@ -49,6 +50,8 @@ export function useChat(activeProject?: ProjectSummary | null) {
         sourceType: summary.sourceType,
         sourceLabel: summary.sourceLabel,
         insight: null,
+        preferredProvider: null,
+        preferredModelId: null,
       })));
     } catch (error) {
       console.error('Failed to sync conversations', error);
@@ -118,7 +121,12 @@ export function useChat(activeProject?: ProjectSummary | null) {
   const sendMessage = useCallback(
     async (
       content: string,
-      options?: { modelId?: string; attachment?: ChatAttachment | null; project?: ProjectSummary | null }
+      options?: {
+        modelId?: string;
+        preferredProvider?: string | null;
+        attachment?: ChatAttachment | null;
+        project?: ProjectSummary | null;
+      }
     ) => {
       let conversation = getActiveConversation();
       const selectedProject = options?.project || activeProject || null;
@@ -136,9 +144,18 @@ export function useChat(activeProject?: ProjectSummary | null) {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           insight: null,
+          preferredProvider: options?.preferredProvider || null,
+          preferredModelId: options?.modelId || null,
         };
         addConversation(newConversation);
         conversation = newConversation;
+      }
+
+      if (options?.preferredProvider || options?.modelId) {
+        updateConversationPreferences(conversation.id, {
+          preferredProvider: options?.preferredProvider || null,
+          preferredModelId: options?.modelId || null,
+        });
       }
 
       let historySource = conversation.messages;
@@ -233,6 +250,10 @@ export function useChat(activeProject?: ProjectSummary | null) {
           autoComplexity: response.autoComplexity || null,
           fallbackUsed: Boolean(response.fallbackUsed),
         });
+        updateConversationPreferences(conversation.id, {
+          preferredProvider: response.provider || options?.preferredProvider || null,
+          preferredModelId: response.modelId || options?.modelId || null,
+        });
         updateConversationInsight(conversation.id, response.insight || null);
       } catch (error: unknown) {
         const err = error as { response?: { data?: { error?: string } }; message?: string };
@@ -255,6 +276,7 @@ export function useChat(activeProject?: ProjectSummary | null) {
       setConversationMessages,
       updateMessage,
       updateConversationInsight,
+      updateConversationPreferences,
       updateConversationServerId,
     ]
   );

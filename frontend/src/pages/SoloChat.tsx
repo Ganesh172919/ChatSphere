@@ -28,6 +28,7 @@ import { getModelGroups, type AIModelGroup } from '../utils/aiModels';
 import { useAuthStore } from '../store/authStore';
 
 const SOLO_MODEL_STORAGE_KEY = 'chatsphere.solo.model';
+const SOLO_PROVIDER_STORAGE_KEY = 'chatsphere.solo.provider';
 const DEFAULT_COMPOSER_HEIGHT = 228;
 
 const formatDate = (value?: string | null) => {
@@ -39,58 +40,87 @@ const formatDate = (value?: string | null) => {
   return `Updated ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 };
 
-interface ModelSelectorProps {
+interface ProviderModelSelectorProps {
+  selectedProvider: string;
   selectedModelId: string;
-  availableModels: AIModel[];
   groupedModels: AIModelGroup[];
   loadingModels: boolean;
   emptyModelMessage: string;
-  onChange: (modelId: string) => void;
-  label?: string;
+  onProviderChange: (provider: string) => void;
+  onModelChange: (modelId: string) => void;
   compact?: boolean;
 }
 
-function ModelSelector({
+function ProviderModelSelector({
+  selectedProvider,
   selectedModelId,
-  availableModels,
   groupedModels,
   loadingModels,
   emptyModelMessage,
-  onChange,
-  label = 'Model',
+  onProviderChange,
+  onModelChange,
   compact = false,
-}: ModelSelectorProps) {
-  const disabled = loadingModels || availableModels.length === 0;
+}: ProviderModelSelectorProps) {
+  const disabled = loadingModels || groupedModels.length === 0;
+  const activeGroup = groupedModels.find((g) => g.provider === selectedProvider);
+  const modelsForProvider = activeGroup?.models || [];
 
   return (
-    <div
-      className={`rounded-2xl border border-navy-700/70 bg-navy-800/80 ${
-        compact ? 'px-3 py-2' : 'px-3.5 py-3'
-      }`}
-    >
-      <p className="mb-1 text-[9px] uppercase tracking-[0.22em] text-gray-500">{label}</p>
-      <select
-        value={selectedModelId}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        className={`w-full bg-transparent text-white focus:outline-none ${
-          compact ? 'text-xs font-medium' : 'text-sm font-medium'
+    <div className="flex flex-col gap-1.5">
+      {/* Provider selector */}
+      <div
+        className={`rounded-2xl border border-navy-700/70 bg-navy-800/80 ${
+          compact ? 'px-3 py-1.5' : 'px-3.5 py-2.5'
         }`}
-        aria-label={label}
       >
-        {availableModels.length === 0 ? (
-          <option value="">{emptyModelMessage || 'No AI models configured'}</option>
-        ) : null}
-        {groupedModels.map((group) => (
-          <optgroup key={group.provider} label={group.label}>
-            {group.models.map((model) => (
+        <p className="mb-0.5 text-[9px] uppercase tracking-[0.22em] text-gray-500">API Provider</p>
+        <select
+          value={selectedProvider}
+          onChange={(e) => onProviderChange(e.target.value)}
+          disabled={disabled}
+          className={`w-full cursor-pointer bg-transparent text-white focus:outline-none ${
+            compact ? 'text-xs font-medium' : 'text-sm font-medium'
+          }`}
+          aria-label="API Provider"
+        >
+          {groupedModels.length === 0 ? (
+            <option value="">No providers available</option>
+          ) : (
+            groupedModels.map((group) => (
+              <option key={group.provider} value={group.provider} className="bg-navy-900 text-white">
+                {group.label}
+              </option>
+            ))
+          )}
+        </select>
+      </div>
+      {/* Model selector */}
+      <div
+        className={`rounded-2xl border border-navy-700/70 bg-navy-800/80 ${
+          compact ? 'px-3 py-1.5' : 'px-3.5 py-2.5'
+        }`}
+      >
+        <p className="mb-0.5 text-[9px] uppercase tracking-[0.22em] text-gray-500">Model</p>
+        <select
+          value={selectedModelId}
+          onChange={(e) => onModelChange(e.target.value)}
+          disabled={disabled || modelsForProvider.length === 0}
+          className={`w-full cursor-pointer bg-transparent text-white focus:outline-none ${
+            compact ? 'text-xs font-medium' : 'text-sm font-medium'
+          }`}
+          aria-label="Model"
+        >
+          {modelsForProvider.length === 0 ? (
+            <option value="">{emptyModelMessage || 'No models for this provider'}</option>
+          ) : (
+            modelsForProvider.map((model) => (
               <option key={model.id} value={model.id} className="bg-navy-900 text-white">
                 {model.label}
               </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+            ))
+          )}
+        </select>
+      </div>
     </div>
   );
 }
@@ -102,6 +132,7 @@ export default function SoloChat() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [availableModels, setAvailableModels] = useState<AIModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState('');
   const [loadingModels, setLoadingModels] = useState(true);
   const [emptyModelMessage, setEmptyModelMessage] = useState('');
   const [insightLoading, setInsightLoading] = useState(false);
@@ -140,16 +171,29 @@ export default function SoloChat() {
         const visibleModels = result.models.filter((model) => model.id !== 'auto');
         setAvailableModels(visibleModels);
         setEmptyModelMessage(result.emptyStateMessage || '');
-        const stored = localStorage.getItem(SOLO_MODEL_STORAGE_KEY);
+        const storedModel = localStorage.getItem(SOLO_MODEL_STORAGE_KEY);
+        const storedProvider = localStorage.getItem(SOLO_PROVIDER_STORAGE_KEY);
+        const groups = getModelGroups(visibleModels);
+
+        // Restore provider
+        const validProvider = groups.find((g) => g.provider === storedProvider);
+        const defaultProvider = groups[0]?.provider || '';
+        const activeProvider = validProvider ? validProvider.provider : defaultProvider;
+        setSelectedProvider(activeProvider);
+
+        // Restore model within the active provider
+        const providerModels = groups.find((g) => g.provider === activeProvider)?.models || [];
+        const storedModelValid = providerModels.some((m) => m.id === storedModel);
         const preferred =
           result.defaultModelId && result.defaultModelId !== 'auto'
             ? result.defaultModelId
-            : visibleModels[0]?.id || '';
-        setSelectedModelId(visibleModels.some((model) => model.id === stored) ? String(stored) : preferred);
+            : providerModels[0]?.id || '';
+        setSelectedModelId(storedModelValid ? String(storedModel) : preferred);
       } catch (error) {
         console.error('Failed to load AI models', error);
         setAvailableModels([]);
         setSelectedModelId('');
+        setSelectedProvider('');
         setEmptyModelMessage('No AI models are configured. Add provider API keys in backend/.env.');
       } finally {
         setLoadingModels(false);
@@ -161,6 +205,17 @@ export default function SoloChat() {
   useEffect(() => {
     if (selectedModelId) localStorage.setItem(SOLO_MODEL_STORAGE_KEY, selectedModelId);
   }, [selectedModelId]);
+
+  useEffect(() => {
+    if (selectedProvider) localStorage.setItem(SOLO_PROVIDER_STORAGE_KEY, selectedProvider);
+  }, [selectedProvider]);
+
+  const handleProviderChange = (provider: string) => {
+    setSelectedProvider(provider);
+    const group = groupedModels.find((g) => g.provider === provider);
+    const firstModel = group?.models[0]?.id || '';
+    setSelectedModelId(firstModel);
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: activeMessages.length > 0 ? 'smooth' : 'auto' });
@@ -344,15 +399,15 @@ export default function SoloChat() {
                     {activeConversation?.title || 'New conversation'}
                   </h1>
                 </div>
-                <div className="hidden min-w-[12rem] max-w-[15rem] lg:block">
-                  <ModelSelector
+                <div className="hidden min-w-[14rem] max-w-[17rem] lg:block">
+                  <ProviderModelSelector
+                    selectedProvider={selectedProvider}
                     selectedModelId={selectedModelId}
-                    availableModels={availableModels}
                     groupedModels={groupedModels}
                     loadingModels={loadingModels}
                     emptyModelMessage={emptyModelMessage}
-                    onChange={setSelectedModelId}
-                    label="Quick switch"
+                    onProviderChange={handleProviderChange}
+                    onModelChange={setSelectedModelId}
                     compact
                   />
                 </div>
@@ -481,15 +536,15 @@ export default function SoloChat() {
                       <p className="text-[10px] uppercase tracking-[0.22em] text-gray-500">Solo AI chat</p>
                       <p className="mt-1 text-xs text-gray-400">{chatStatusLabel}</p>
                     </div>
-                    <div className="w-full sm:max-w-[16rem]">
-                      <ModelSelector
+                    <div className="w-full sm:max-w-[18rem]">
+                      <ProviderModelSelector
+                        selectedProvider={selectedProvider}
                         selectedModelId={selectedModelId}
-                        availableModels={availableModels}
                         groupedModels={groupedModels}
                         loadingModels={loadingModels}
                         emptyModelMessage={emptyModelMessage}
-                        onChange={setSelectedModelId}
-                        label="Response model"
+                        onProviderChange={handleProviderChange}
+                        onModelChange={setSelectedModelId}
                         compact
                       />
                     </div>

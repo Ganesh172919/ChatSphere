@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   MessageSquare, Users, Search, TrendingUp,
-  ArrowRight, Clock, Zap, Globe, Brain, FolderKanban,
+  ArrowRight, Clock, Zap, Globe,
   Activity, Shield, Tag,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
@@ -79,11 +79,6 @@ export default function Dashboard() {
     if (hours < 24) return `${hours}h ago`;
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
-
-  const featuredQuote =
-    data?.activity.find((item) => item.content.trim().length >= 24) ||
-    data?.activity[0] ||
-    null;
 
   const topTags = Array.from(
     new Set((data?.recentRooms || []).flatMap((room) => room.tags))
@@ -221,9 +216,8 @@ export default function Dashboard() {
               {[
                 { to: '/chat', icon: MessageSquare, label: 'Solo AI Chat', sub: '1-on-1 reasoning with Gemini' },
                 { to: '/rooms', icon: Users, label: 'Group Rooms', sub: 'Collaborate with @ai mentions' },
-                { to: '/projects', icon: FolderKanban, label: 'Projects', sub: 'Context-rich AI workspaces' },
-                { to: '/memory', icon: Brain, label: 'Memory Center', sub: 'Review what ChatSphere remembers' },
                 { to: '/search', icon: Search, label: 'Search Messages', sub: 'Find anything across all chats' },
+                { to: '/export', icon: Globe, label: 'Exports', sub: 'Download conversations and room history' },
               ].map(({ to, icon: Icon, label, sub }) => (
                 <Link
                   key={to}

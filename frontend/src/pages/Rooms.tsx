@@ -6,7 +6,7 @@ import Navbar from '../components/Navbar';
 import RoomCard from '../components/RoomCard';
 import CreateRoomModal from '../components/CreateRoomModal';
 import { fetchRooms, createRoom, joinRoomById } from '../api/rooms';
-import type { Room } from '../api/rooms';
+import type { Room, RoomVisibility } from '../api/rooms';
 import toast from 'react-hot-toast';
 
 export default function Rooms() {
@@ -33,13 +33,21 @@ export default function Rooms() {
     loadRooms();
   }, []);
 
-  const handleCreateRoom = async (name: string, description: string, tags: string[], maxUsers: number) => {
+  const handleCreateRoom = async (
+    name: string,
+    description: string,
+    tags: string[],
+    maxUsers: number,
+    visibility: RoomVisibility
+  ) => {
     try {
-      const room = await createRoom(name, description, tags, maxUsers);
+      const room = await createRoom(name, description, tags, maxUsers, visibility);
       setRooms((prev) => [room, ...prev]);
       setShowCreateModal(false);
-      toast.success('Room created!');
-      navigate(`/group/${room.id}`);
+      toast.success(visibility === 'private' ? 'Private room created' : 'Room created!');
+      navigate(`/group/${room.id}`, {
+        state: room.privateJoinKey ? { privateJoinKey: room.privateJoinKey } : undefined,
+      });
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
       toast.error(error.response?.data?.error || 'Failed to create room');
@@ -47,7 +55,13 @@ export default function Rooms() {
   };
 
   const handleJoinRoom = async (roomId: string, isMember = false) => {
+    const room = rooms.find((entry) => entry.id === roomId);
     if (isMember) {
+      navigate(`/group/${roomId}`);
+      return;
+    }
+
+    if (room?.visibility === 'private') {
       navigate(`/group/${roomId}`);
       return;
     }
@@ -148,6 +162,7 @@ export default function Rooms() {
                 tags={room.tags}
                 messageCount={room.messageCount}
                 memberCount={room.memberCount}
+                visibility={room.visibility}
                 isMember={room.isMember}
                 isJoining={joiningRoomId === room.id}
                 onJoin={(id, memberState) => void handleJoinRoom(id, memberState)}

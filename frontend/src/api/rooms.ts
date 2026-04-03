@@ -1,18 +1,27 @@
 import api from './axios';
 import type { ConversationInsight, MemoryReference } from '../types/chat';
 
+export type RoomVisibility = 'public' | 'private';
+
 export interface Room {
   id: string;
   name: string;
   description: string;
   tags: string[];
   maxUsers: number;
+  visibility: RoomVisibility;
   memberCount?: number;
   creatorId: string;
   createdAt: string;
   messageCount: number;
   isMember?: boolean;
   currentUserRole?: 'creator' | 'admin' | 'moderator' | 'member' | null;
+  privateJoinKey?: string | null;
+}
+
+export interface RoomAccess extends Room {
+  hasAccess: boolean;
+  requiresJoinKey: boolean;
 }
 
 export interface RoomDetail extends Room {
@@ -49,13 +58,24 @@ export async function fetchRooms(): Promise<Room[]> {
   return data;
 }
 
-export async function createRoom(name: string, description: string, tags: string[], maxUsers: number): Promise<Room> {
-  const { data } = await api.post<Room>('/rooms', { name, description, tags, maxUsers });
+export async function createRoom(
+  name: string,
+  description: string,
+  tags: string[],
+  maxUsers: number,
+  visibility: RoomVisibility
+): Promise<Room> {
+  const { data } = await api.post<Room>('/rooms', { name, description, tags, maxUsers, visibility });
   return data;
 }
 
 export async function fetchRoomById(id: string): Promise<RoomDetail> {
   const { data } = await api.get<RoomDetail>(`/rooms/${id}`);
+  return data;
+}
+
+export async function fetchRoomAccess(id: string): Promise<RoomAccess> {
+  const { data } = await api.get<RoomAccess>(`/rooms/${id}/access`);
   return data;
 }
 
@@ -78,8 +98,13 @@ export async function runRoomAction(
   return data;
 }
 
-export async function joinRoomById(id: string): Promise<Room> {
-  const { data } = await api.post<Room>(`/rooms/${id}/join`);
+export async function joinRoomById(id: string, joinKey?: string): Promise<Room> {
+  const { data } = await api.post<Room>(`/rooms/${id}/join`, joinKey ? { joinKey } : {});
+  return data;
+}
+
+export async function fetchRoomPrivateKey(id: string): Promise<{ privateJoinKey: string }> {
+  const { data } = await api.get<{ privateJoinKey: string }>(`/rooms/${id}/private-key`);
   return data;
 }
 

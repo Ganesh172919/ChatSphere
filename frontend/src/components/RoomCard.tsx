@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { Users, MessageSquare, ArrowRight, Loader2 } from 'lucide-react';
+import { ArrowRight, Globe, Loader2, Lock, MessageSquare, Users } from 'lucide-react';
+import type { RoomVisibility } from '../api/rooms';
 
 interface Props {
   id: string;
@@ -8,6 +9,7 @@ interface Props {
   tags: string[];
   messageCount: number;
   memberCount?: number;
+  visibility: RoomVisibility;
   isMember?: boolean;
   isJoining?: boolean;
   onJoin: (id: string, isMember: boolean) => void;
@@ -21,11 +23,14 @@ export default function RoomCard({
   tags,
   messageCount,
   memberCount = 0,
+  visibility,
   isMember = false,
   isJoining = false,
   onJoin,
   index = 0,
 }: Props) {
+  const isPrivate = visibility === 'private';
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -41,9 +46,21 @@ export default function RoomCard({
       <div className="relative p-5">
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
-          <h3 className="font-display font-bold text-lg text-white group-hover:text-neon-purple transition-colors truncate mr-2">
-            {name}
-          </h3>
+          <div className="min-w-0 mr-2">
+            <div className="mb-1 flex items-center gap-2">
+              <h3 className="font-display font-bold text-lg text-white group-hover:text-neon-purple transition-colors truncate">
+                {name}
+              </h3>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                isPrivate
+                  ? 'border border-amber-400/20 bg-amber-400/10 text-amber-300'
+                  : 'border border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
+              }`}>
+                {isPrivate ? <Lock size={10} /> : <Globe size={10} />}
+                {isPrivate ? 'Private' : 'Public'}
+              </span>
+            </div>
+          </div>
           <div className="flex items-center gap-3 text-gray-500 flex-shrink-0">
             <div className="flex items-center gap-1">
               <Users size={12} />
@@ -83,12 +100,14 @@ export default function RoomCard({
         {/* Footer */}
         <div className="flex items-center justify-between pt-3 border-t border-navy-700/50">
           <div className="flex items-center gap-1.5 text-gray-500">
-            <Users size={14} />
-            <span className="text-xs">{isMember ? 'You are a member' : 'Open room'}</span>
+            {isPrivate ? <Lock size={14} /> : <Users size={14} />}
+            <span className="text-xs">
+              {isMember ? 'You are a member' : isPrivate ? 'Requires room key' : 'Anyone can join'}
+            </span>
           </div>
           <div className="flex items-center gap-1.5 text-neon-purple text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
             {isJoining ? <Loader2 size={12} className="animate-spin" /> : null}
-            {isMember ? 'Open' : 'Join'} <ArrowRight size={12} />
+            {isMember ? 'Open' : isPrivate ? 'Enter key' : 'Join'} <ArrowRight size={12} />
           </div>
         </div>
       </div>

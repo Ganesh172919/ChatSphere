@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { MessageSquare, Users, Brain, ArrowRight, Zap, Shield, Globe } from 'lucide-react';
+import { MessageSquare, Users, Brain, Zap, Shield, Globe } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
 const features = [
