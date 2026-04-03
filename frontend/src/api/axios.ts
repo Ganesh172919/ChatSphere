@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../store/authStore';
 
 const api = axios.create({
@@ -25,10 +25,10 @@ const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue = [];
 };
 
-// Request interceptor — attach access token
+// Request interceptor — attach access token from Zustand store (single source of truth)
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('accessToken');
+    const token = useAuthStore.getState().accessToken;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -41,21 +41,29 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    // Guard: if error.config is undefined (network error, cancelled), reject immediately
+    if (!error.config) {
+      return Promise.reject(error);
+    }
 
-    // Don't retry refresh calls or already-retried requests
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+
+    // Don't retry auth-related calls or already-retried requests
     if (
       error.response?.status === 401 &&
       !originalRequest._retry &&
       !originalRequest.url?.includes('/auth/refresh') &&
-      !originalRequest.url?.includes('/auth/login')
+      !originalRequest.url?.includes('/auth/login') &&
+      !originalRequest.url?.includes('/auth/register') &&
+      !originalRequest.url?.includes('/auth/google')
     ) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
           .then((token) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
+            if (!token) return Promise.reject(new Error('No token after refresh'));
+            originalRequest.headers.Authorization = `Bearer ${token as string}`;
             return api(originalRequest);
           })
           .catch((err) => Promise.reject(err));
@@ -65,22 +73,19 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // Cookie-based refresh — no body needed
-        const { data } = await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        // Uses api instance → withCredentials + baseURL applied automatically
+        const { data } = await api.post('/auth/refresh');
         const { accessToken } = data;
 
         useAuthStore.getState().updateTokens(accessToken);
-
-        api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
 
         processQueue(null, accessToken);
         return api(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
-        // Clear auth state
+        // Let app's auth guards handle the redirect via isAuthenticated → false
         useAuthStore.getState().logout();
-        window.location.href = '/login';
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

@@ -18,9 +18,9 @@ function setRefreshCookie(res, token) {
 function clearRefreshCookie(res) {
   res.clearCookie(REFRESH_TOKEN_COOKIE, {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/api/auth',
+    sameSite: REFRESH_COOKIE_OPTIONS.sameSite,
+    secure: REFRESH_COOKIE_OPTIONS.secure,
+    path: REFRESH_COOKIE_OPTIONS.path,
   });
 }
 
